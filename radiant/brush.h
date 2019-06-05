@@ -257,6 +257,13 @@ inline PointVertex pointvertex_for_windingpoint( const Vector3& point, const Col
 			   );
 }
 
+inline DepthTestedPointVertex depthtested_pointvertex_for_windingpoint( const Vector3& point, const Colour4b& colour ){
+	return DepthTestedPointVertex(
+			   vertex3f_for_vector3( point ),
+			   colour
+			   );
+}
+
 inline bool check_plane_is_integer( const PlanePoints& planePoints ){
 	return !float_is_integer( planePoints[0][0] )
 		   || !float_is_integer( planePoints[0][1] )
@@ -824,7 +831,7 @@ void copy( const Vector3& p0, const Vector3& p1, const Vector3& p2 ){
 	}
 	else
 	{
-		m_planeCached = plane3_for_points( p2, p1, p0 );
+		m_planeCached = plane3_for_points( p0, p1, p2 );
 		updateSource();
 	}
 }
@@ -1089,6 +1096,14 @@ void texdef_from_points(){
 		st[i] = matrix4_transformed_point( local2tex, m_move_planepts[i] );
 	Texdef_from_ST( m_texdefTransformed, m_move_planeptsTransformed, st, m_shader.width(), m_shader.height() );
 
+	Brush_textureChanged();
+}
+
+void transform_texdef( const Matrix4& matrix, const Vector3& invariant = g_vector3_identity ){
+	revertTexdef();
+//	Texdef_transformLocked( m_texdefTransformed, m_shader.width(), m_shader.height(), m_plane.plane3(), matrix, static_cast<Vector3>( m_plane.plane3().normal() * m_plane.plane3().dist() ) );
+	Texdef_transform( m_texdefTransformed, m_shader.width(), m_shader.height(), m_plane.plane3(), matrix, invariant );
+	EmitTextureCoordinates();
 	Brush_textureChanged();
 }
 
@@ -1409,8 +1424,7 @@ class RenderableWireframe : public OpenGLRenderable
 public:
 void render( RenderStateFlags state ) const {
 #if 1
-	glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( PointVertex ), &m_vertices->colour );
-	glVertexPointer( 3, GL_FLOAT, sizeof( PointVertex ), &m_vertices->vertex );
+	glVertexPointer( 3, GL_FLOAT, sizeof( DepthTestedPointVertex ), &m_vertices->vertex );
 	glDrawElements( GL_LINES, GLsizei( m_size << 1 ), RenderIndexTypeID, m_faceVertex.data() );
 #else
 	glBegin( GL_LINES );
@@ -1425,7 +1439,7 @@ void render( RenderStateFlags state ) const {
 
 Array<EdgeRenderIndices> m_faceVertex;
 std::size_t m_size;
-const PointVertex* m_vertices;
+const DepthTestedPointVertex* m_vertices;
 };
 
 class Brush;
@@ -1500,16 +1514,6 @@ Face& getFace() const {
 
 void testSelect( SelectionTest& test, SelectionIntersection& best ){
 	test.TestPoint( getEdge(), best );
-}
-Vector3 bestPlaneIndirect( const SelectionTest& test ) const {
-	const Winding& winding = getFace().getWinding();
-	Vector3 points[2];
-	points[0] = winding[m_faceVertex.getVertex()].vertex;
-	points[1] = winding[Winding_next( winding, m_faceVertex.getVertex() )].vertex;
-	for( std::size_t i = 0; i < 2; ++i ){
-		points[i] = vector4_projected( matrix4_transformed_vector4( test.getVolume().GetViewMatrix(), Vector4( points[i], 1 ) ) );
-	}
-	return line_closest_point( Line( points[0], points[1] ), g_vector3_identity );
 }
 };
 
@@ -1592,17 +1596,18 @@ Faces m_faces;
 
 // cached data compiled from state
 Array<PointVertex> m_faceCentroidPoints;
-RenderablePointArray m_render_faces;
+RenderablePointArray<PointVertex> m_render_faces;
 
-Array<PointVertex> m_uniqueVertexPoints;
+mutable Array<DepthTestedPointVertex> m_uniqueVertexPoints;
 typedef std::vector<SelectableVertex> SelectableVertices;
 SelectableVertices m_select_vertices;
-RenderablePointArray m_render_vertices;
+RenderablePointArray<DepthTestedPointVertex> m_render_vertices;
+RenderableDepthTestedPointArray m_render_deepvertices;
 
 Array<PointVertex> m_uniqueEdgePoints;
 typedef std::vector<SelectableEdge> SelectableEdges;
 SelectableEdges m_select_edges;
-RenderablePointArray m_render_edges;
+RenderablePointArray<PointVertex> m_render_edges;
 
 Array<EdgeRenderIndices> m_edge_indices;
 Array<EdgeFaces> m_edge_faces;
@@ -1625,6 +1630,7 @@ Callback m_lightsChanged;
 
 // static data
 static Shader* m_state_point;
+static Shader* m_state_deeppoint;
 // ----
 
 static EBrushType m_type;
@@ -1636,6 +1642,7 @@ Brush( scene::Node& node, const Callback& evaluateTransform, const Callback& bou
 	m_map( 0 ),
 	m_render_faces( m_faceCentroidPoints, GL_POINTS ),
 	m_render_vertices( m_uniqueVertexPoints, GL_POINTS ),
+	m_render_deepvertices( m_uniqueVertexPoints, GL_POINTS ),
 	m_render_edges( m_uniqueEdgePoints, GL_POINTS ),
 	m_evaluateTransform( evaluateTransform ),
 	m_boundsChanged( boundsChanged ),
@@ -1649,6 +1656,7 @@ Brush( const Brush& other, scene::Node& node, const Callback& evaluateTransform,
 	m_map( 0 ),
 	m_render_faces( m_faceCentroidPoints, GL_POINTS ),
 	m_render_vertices( m_uniqueVertexPoints, GL_POINTS ),
+	m_render_deepvertices( m_uniqueVertexPoints, GL_POINTS ),
 	m_render_edges( m_uniqueEdgePoints, GL_POINTS ),
 	m_evaluateTransform( evaluateTransform ),
 	m_boundsChanged( boundsChanged ),
@@ -1671,6 +1679,7 @@ Brush( const Brush& other ) :
 	m_map( 0 ),
 	m_render_faces( m_faceCentroidPoints, GL_POINTS ),
 	m_render_vertices( m_uniqueVertexPoints, GL_POINTS ),
+	m_render_deepvertices( m_uniqueVertexPoints, GL_POINTS ),
 	m_render_edges( m_uniqueEdgePoints, GL_POINTS ),
 	m_planeChanged( false ),
 	m_transformChanged( false ){
@@ -1837,7 +1846,22 @@ void renderComponents( SelectionSystem::EComponentMode mode, Renderer& renderer,
 	switch ( mode )
 	{
 	case SelectionSystem::eVertex:
-		renderer.addRenderable( m_render_vertices, localToWorld );
+		{
+			if( GlobalOpenGL().GL_1_5() ){
+				if( volume.fill() ){
+					renderer.SetState( m_state_deeppoint, Renderer::eFullMaterials );
+					renderer.addRenderable( m_render_deepvertices, localToWorld );
+				}
+				else{
+					for( auto& p : m_uniqueVertexPoints )
+						p.colour = colour_vertex;
+					renderer.addRenderable( m_render_vertices, localToWorld );
+				}
+			}
+			else{
+				renderer.addRenderable( m_render_vertices, localToWorld );
+			}
+		}
 		break;
 	case SelectionSystem::eEdge:
 		renderer.addRenderable( m_render_edges, localToWorld );
@@ -2004,9 +2028,11 @@ static void constructStatic( EBrushType type ){
 	g_bp_globals.m_texdefTypeId = BrushType_getTexdefType( type );
 
 	m_state_point = GlobalShaderCache().capture( "$POINT" );
+	m_state_deeppoint = GlobalShaderCache().capture( "$DEEPPOINT" );
 }
 static void destroyStatic(){
 	GlobalShaderCache().release( "$POINT" );
+	GlobalShaderCache().release( "$DEEPPOINT" );
 }
 
 std::size_t DEBUG_size(){
@@ -2798,7 +2824,6 @@ public:
 RenderablePointVectorPushBack( RenderablePointVector& points ) : m_points( points ){
 }
 void operator()( const Vector3& point ) const {
-	const Colour4b colour_selected( 0, 0, 255, 255 );
 	m_points.push_back( pointvertex_for_windingpoint( point, colour_selected ) );
 }
 };
@@ -3181,24 +3206,29 @@ void testSelect( Selector& selector, SelectionTest& test ){
 		Selector_add( selector, *this, best );
 	}
 }
-void bestPlaneIndirect( const SelectionTest& test, Plane3& plane, Vector3& intersection, float& dist, const Vector3& viewer ) const {
-	const Vector3 intersection_new = m_edge->bestPlaneIndirect( test );
-	const float dist_new = vector3_length_squared( intersection_new );
-	if( dist_new < dist ){
-		FaceVertexId faceVertex = m_edge->m_faceVertex;
-		const Plane3& plane1 = m_faceInstances[faceVertex.getFace()].getFace().plane3();
-		if( ( vector3_dot( plane1.normal(), viewer ) - plane1.dist() ) <= 0 ){
-			plane = plane1;
-			intersection = intersection_new;
-			dist = dist_new;
-		}
-		else{
-			faceVertex = next_edge( m_edge->m_faces, faceVertex );
-			const Plane3& plane2 = m_faceInstances[faceVertex.getFace()].getFace().plane3();
-			if( ( vector3_dot( plane2.normal(), viewer ) - plane2.dist() ) <= 0 ){
-				plane = plane2;
+
+void bestPlaneIndirect( const SelectionTest& test, Plane3& plane, Vector3& intersection, float& dist ) const {
+	const Winding& winding = m_edge->getFace().getWinding();
+	FaceVertexId faceVertex = m_edge->m_faceVertex;
+	Line line( winding[faceVertex.getVertex()].vertex, winding[Winding_next( winding, faceVertex.getVertex() )].vertex );
+	if( matrix4_clip_line_by_nearplane( test.getVolume().GetViewMatrix(), line ) == 2 ){
+		const Vector3 intersection_new = line_closest_point( line, g_vector3_identity );
+		const float dist_new = vector3_length_squared( intersection_new );
+		if( dist_new < dist ){
+			const Plane3& plane1 = m_faceInstances[faceVertex.getFace()].getFace().plane3();
+			if( plane3_distance_to_point( plane1, test.getVolume().getViewer() ) <= 0 ){
+				plane = plane1;
 				intersection = intersection_new;
 				dist = dist_new;
+			}
+			else{
+				faceVertex = next_edge( m_edge->m_faces, faceVertex );
+				const Plane3& plane2 = m_faceInstances[faceVertex.getFace()].getFace().plane3();
+				if( plane3_distance_to_point( plane2, test.getVolume().getViewer() ) <= 0 ){
+					plane = plane2;
+					intersection = intersection_new;
+					dist = dist_new;
+				}
 			}
 		}
 	}
@@ -3342,7 +3372,7 @@ mutable RenderableWireframe m_render_wireframe;
 mutable RenderablePointVector m_render_selected;
 mutable AABB m_aabb_component;
 mutable Array<PointVertex> m_faceCentroidPointsCulled;
-RenderablePointArray m_render_faces_wireframe;
+RenderablePointArray<PointVertex> m_render_faces_wireframe;
 mutable bool m_viewChanged;   // requires re-evaluation of view-dependent cached data
 
 BrushClipPlane m_clipPlane;
@@ -3807,11 +3837,11 @@ void bestPlaneDirect( SelectionTest& test, Plane3& plane, SelectionIntersection&
 		}
 	}
 }
-void bestPlaneIndirect( SelectionTest& test, Plane3& plane, Vector3& intersection, float& dist, const Vector3& viewer ){
+void bestPlaneIndirect( SelectionTest& test, Plane3& plane, Vector3& intersection, float& dist ){
 	test.BeginMesh( localToWorld() );
 	for ( EdgeInstances::iterator i = m_edgeInstances.begin(); i != m_edgeInstances.end(); ++i )
 	{
-		( *i ).bestPlaneIndirect( test, plane, intersection, dist, viewer );
+		( *i ).bestPlaneIndirect( test, plane, intersection, dist );
 	}
 }
 void selectByPlane( const Plane3& plane ){

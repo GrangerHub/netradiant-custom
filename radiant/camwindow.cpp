@@ -748,72 +748,35 @@ void Camera_motionDelta( int x, int y, unsigned int state, void* data ){
 #define cam_draw_size_use_tex
 class CamDrawSize
 {
-	GLuint _texs[3];
-	int _widths[3];
-	int _heights[3];
 	Vector3 _extents;
+	RenderTextLabel m_labels[3];
 public:
 	CamDrawSize() : _extents( -99.9f, -99.9f, -99.9f ){
-		_texs[0] = _texs[1] = _texs[2] = 0;
 	}
-	~CamDrawSize(){
-		for( std::size_t i = 0; i < 3; ++i )
-			freeTex( _texs[i] );
-	}
-	void render( const AABB& bounds, const View view ){
-		setState();
+	void render( Renderer& renderer, Shader* shader, const View& view ){
+		const AABB bounds = GlobalSelectionSystem().getBoundsSelected();
+		if( bounds.extents.x() != 0 || bounds.extents.y() != 0 || bounds.extents.z() != 0 ){
+			renderer.SetState( shader, Renderer::eFullMaterials );
 
-		Vector4 points[3] = { Vector4( bounds.origin - g_vector3_axes[1] * bounds.extents - g_vector3_axes[2] * bounds.extents, 1 ),
-								Vector4( bounds.origin - g_vector3_axes[0] * bounds.extents - g_vector3_axes[2] * bounds.extents, 1 ),
-								Vector4( bounds.origin - g_vector3_axes[0] * bounds.extents - g_vector3_axes[1] * bounds.extents, 1 ),
-								};
-		for( std::size_t i = 0; i < 3; ++i ){
-			matrix4_transform_vector4( view.GetViewMatrix(), points[i] );
-			points[i].x() /= points[i].w();
-			points[i].y() /= points[i].w();
-			points[i].z() /= points[i].w();
-			matrix4_transform_vector4( view.GetViewport(), points[i] );
-		}
+			Vector4 points[3] = { Vector4( bounds.origin - g_vector3_axes[1] * bounds.extents - g_vector3_axes[2] * bounds.extents, 1 ),
+									Vector4( bounds.origin - g_vector3_axes[0] * bounds.extents - g_vector3_axes[2] * bounds.extents, 1 ),
+									Vector4( bounds.origin - g_vector3_axes[0] * bounds.extents - g_vector3_axes[1] * bounds.extents, 1 ),
+									};
+			for( std::size_t i = 0; i < 3; ++i ){
+				matrix4_transform_vector4( view.GetViewMatrix(), points[i] );
+				points[i].x() /= points[i].w();
+				points[i].y() /= points[i].w();
+//				points[i].z() /= points[i].w();
+				matrix4_transform_vector4( view.GetViewport(), points[i] );
+			}
 
-		for( std::size_t i = 0; i < 3; ++i ){
-			if( points[i].w() > 0.005f ){
-#ifdef cam_draw_size_use_tex
-				updateTex( i, bounds.extents[i] );
-				if( _texs[i] > 0 ) {
-					glBindTexture( GL_TEXTURE_2D, _texs[i] );
-
-					//Here we draw the texturemaped quads.
-					//The bitmap that we got from FreeType was not
-					//oriented quite like we would like it to be,
-					//so we need to link the texture to the quad
-					//so that the result will be properly aligned.
-					glBegin( GL_QUADS );
-					const float xoffset0 = 0;
-					const float xoffset1 = 1.f / 3.f;
-					glTexCoord2f( xoffset0, 1 );
-					glVertex2f( points[i].x(), points[i].y() );
-					glTexCoord2f( xoffset0, 0 );
-					glVertex2f( points[i].x(), points[i].y() + _heights[i] + .01f );
-					glTexCoord2f( xoffset1, 0 );
-					glVertex2f( points[i].x() + _widths[i] + .01f, points[i].y() + _heights[i] + .01f );
-					glTexCoord2f( xoffset1, 1 );
-					glVertex2f( points[i].x() + _widths[i] + .01f, points[i].y() );
-					glEnd();
-
-					glBindTexture( GL_TEXTURE_2D, 0 );
+			for( std::size_t i = 0; i < 3; ++i ){
+				if( points[i].w() > 0.005f ){
+					updateTex( i, bounds.extents[i] );
+					m_labels[i].screenPos.x() = points[i].x();
+					m_labels[i].screenPos.y() = points[i].y();
+					renderer.addRenderable( m_labels[i], g_matrix4_identity );
 				}
-#else
-				StringOutputStream stream( 16 );
-				stream << ( bounds.extents[i] * 2 );
-
-				glColor3fv( vector3_to_array( g_vector3_identity ) );
-				glRasterPos2fv( vector4_to_array( points[i] + Vector4( 1, -1, 0, 0 ) ) );
-				GlobalOpenGL().drawString( stream.c_str() );
-
-				glColor3fv( vector3_to_array( getColor( i ) ) );
-				glRasterPos2fv( vector4_to_array( points[i] ) );
-				GlobalOpenGL().drawString( stream.c_str() );
-#endif
 			}
 		}
 	}
@@ -831,53 +794,12 @@ private:
 	}
 	void updateTex( const std::size_t i, const float extent ){
 		if( extent != _extents[i] ){
-			freeTex( _texs[i] );
 			_extents[i] = extent;
+			m_labels[i].texFree();
+			StringOutputStream stream( 16 );
+			stream << ( extent * 2 );
+			m_labels[i].texAlloc( stream.c_str(), getColor( i ) );
 		}
-		if( 0 == _texs[i] ){
-			glGenTextures( 1, &_texs[i] );
-			if( _texs[i] > 0 ){
-				StringOutputStream stream( 16 );
-				stream << ( extent * 2 );
-				BasicVector3<unsigned int> colour = getColor( i ) * 255.f;
-				GlobalOpenGL().m_font->renderString( stream.c_str(), _texs[i], colour.data(), _widths[i], _heights[i] );
-			}
-		}
-	}
-	void freeTex( GLuint& tex ){
-		if( tex > 0 ){
-			glDeleteTextures( 1, &tex );
-			tex = 0;
-		}
-	}
-	void setState() const {
-#ifdef cam_draw_size_use_tex
-		glEnable( GL_BLEND );
-		glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-#else
-		glDisable( GL_BLEND );
-#endif
-		glDisable( GL_DEPTH_TEST );
-
-		glDisableClientState( GL_TEXTURE_COORD_ARRAY );
-		glDisableClientState( GL_NORMAL_ARRAY );
-		glDisableClientState( GL_COLOR_ARRAY );
-#ifdef cam_draw_size_use_tex
-		glEnable( GL_TEXTURE_2D );
-		glDisable( GL_CULL_FACE );
-		glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
-		glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
-		if ( GlobalOpenGL().GL_1_3() ) {
-			glActiveTexture( GL_TEXTURE0 );
-			glClientActiveTexture( GL_TEXTURE0 );
-		}
-		glShadeModel( GL_FLAT );
-		glColor4f( 1, 1, 1, 1 );
-#else
-		glDisable( GL_TEXTURE_2D );
-#endif
-		glDisable( GL_LIGHTING );
-		glDisable( GL_COLOR_MATERIAL );
 	}
 };
 
@@ -886,8 +808,8 @@ class RenderableCamWorkzone : public OpenGLRenderable
 {
 	mutable Array<Vector3> m_verticesarr[3];
 	mutable Array<GLboolean> m_edgearr[3];
-	mutable Array<Vector4> m_colorarr0[3];
-	mutable Array<Vector4> m_colorarr1[3];
+	mutable Array<Colour4b> m_colorarr0[3];
+	mutable Array<Colour4b> m_colorarr1[3];
 public:
 void render( RenderStateFlags state ) const {
 	glEnableClientState( GL_EDGE_FLAG_ARRAY );
@@ -917,8 +839,8 @@ void render( RenderStateFlags state ) const {
 
 		Array<Vector3>& verticesarr( m_verticesarr[i] );
 		Array<GLboolean>& edgearr( m_edgearr[i] );
-		Array<Vector4>& colorarr0( m_colorarr0[i] );
-		Array<Vector4>& colorarr1( m_colorarr1[i] );
+		Array<Colour4b>& colorarr0( m_colorarr0[i] );
+		Array<Colour4b>& colorarr1( m_colorarr1[i] );
 		if( verticesarr.size() < approx_count ){
 			verticesarr.resize( approx_count );
 			edgearr.resize( approx_count );
@@ -934,15 +856,15 @@ void render( RenderStateFlags state ) const {
 		for( ; count < approx_count - 4; count += 4 ){
 			verticesarr[count][i] =
 			verticesarr[count + 1][i] = coord;
-			const float alpha = std::min( 1.f, static_cast<float>( ( offset + bounds.extents[i] - fabs( coord - bounds.origin[i] ) ) / offset ) );
-			colorarr0[count] = colorarr0[count + 1] = Vector4( 1, 0, 0, alpha );
-			colorarr1[count] = colorarr1[count + 1] = Vector4( 1, 1, 1, alpha );
+			const float alpha = std::max( 0.f, std::min( 1.f, ( offset + bounds.extents[i] - std::fabs( coord - bounds.origin[i] ) ) / offset ) );
+			colorarr0[count] = colorarr0[count + 1] = Colour4b( 255, 0, 0, alpha * 255 );
+			colorarr1[count] = colorarr1[count + 1] = Colour4b( 255, 255, 255, alpha * 255 );
 			coord += grid;
 			verticesarr[count + 2][i] =
 			verticesarr[count + 3][i] = coord;
-			const float alpha2 = std::min( 1.f, static_cast<float>( ( offset + bounds.extents[i] - fabs( coord - bounds.origin[i] ) ) / offset ) );
-			colorarr0[count + 2] = colorarr0[count + 3] = Vector4( 1, 0, 0, alpha2 );
-			colorarr1[count + 2] = colorarr1[count + 3] = Vector4( 1, 1, 1, alpha2 );
+			const float alpha2 = std::max( 0.f, std::min( 1.f, ( offset + bounds.extents[i] - std::fabs( coord - bounds.origin[i] ) ) / offset ) );
+			colorarr0[count + 2] = colorarr0[count + 3] = Colour4b( 255, 0, 0, alpha2 * 255 );
+			colorarr1[count + 2] = colorarr1[count + 3] = Colour4b( 255, 255, 255, alpha2 * 255 );
 			coord += grid;
 			edgearr[count] =
 			edgearr[count + 2] = GL_FALSE;
@@ -973,11 +895,11 @@ void render( RenderStateFlags state ) const {
 			}
 
 			glPolygonOffset( -2, 2 );
-			glColorPointer( 4, GL_FLOAT, sizeof( Vector4 ), colorarr0.data()->data() );
+			glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( Colour4b ), colorarr0.data() );
 			glDrawArrays( GL_QUADS, start0? 0 : 2, GLsizei( count - ( start0? 4 : 2 ) ) );
 
 			glPolygonOffset( 1, -1 );
-			glColorPointer( 4, GL_FLOAT, sizeof( Vector4 ), colorarr1.data()->data() );
+			glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( Colour4b ), colorarr1.data() );
 			glDrawArrays( GL_QUADS, start0? 2 : 0, GLsizei( count - ( start0? 2 : 4 ) ) );
 		}
 	}
@@ -1012,6 +934,7 @@ static Shader* m_state_select1;
 static Shader* m_state_wire;
 static Shader* m_state_facewire;
 static Shader* m_state_workzone;
+static Shader* m_state_text;
 
 FreezePointer m_freezePointer;
 
@@ -1059,6 +982,7 @@ void queue_draw(){
 void draw();
 
 static void captureStates(){
+	m_state_text = GlobalShaderCache().capture( "$TEXT" );
 	m_state_workzone = GlobalShaderCache().capture( "$CAM_WORKZONE" );
 	m_state_facewire = GlobalShaderCache().capture( "$CAM_FACEWIRE" );
 	m_state_wire = GlobalShaderCache().capture( "$CAM_WIRE" );
@@ -1071,6 +995,7 @@ static void releaseStates(){
 	GlobalShaderCache().release( "$CAM_WIRE" );
 	GlobalShaderCache().release( "$CAM_FACEWIRE" );
 	GlobalShaderCache().release( "$CAM_WORKZONE" );
+	GlobalShaderCache().release( "$TEXT" );
 }
 
 camera_t& getCamera(){
@@ -1105,6 +1030,7 @@ Shader* CamWnd::m_state_select1 = 0;
 Shader* CamWnd::m_state_wire = 0;
 Shader* CamWnd::m_state_facewire = 0;
 Shader* CamWnd::m_state_workzone = 0;
+Shader* CamWnd::m_state_text = 0;
 
 CamWnd* NewCamWnd(){
 	return new CamWnd;
@@ -2114,7 +2040,7 @@ void CamWnd::Cam_Draw(){
 	}
 
 
-	unsigned int globalstate = RENDER_DEPTHTEST | RENDER_COLOURWRITE | RENDER_DEPTHWRITE | RENDER_ALPHATEST | RENDER_BLEND | RENDER_CULLFACE | RENDER_COLOURARRAY | RENDER_OFFSETLINE | RENDER_POLYGONSMOOTH | RENDER_LINESMOOTH | RENDER_FOG | RENDER_COLOURCHANGE | RENDER_TEXT;
+	unsigned int globalstate = RENDER_DEPTHTEST | RENDER_COLOURWRITE | RENDER_DEPTHWRITE | RENDER_ALPHATEST | RENDER_BLEND | RENDER_CULLFACE | RENDER_COLOURARRAY | RENDER_OFFSETLINE | RENDER_POLYGONSMOOTH | RENDER_LINESMOOTH | RENDER_FOG | RENDER_COLOURCHANGE;
 	switch ( m_Camera.draw_mode )
 	{
 	case cd_wire:
@@ -2162,25 +2088,15 @@ void CamWnd::Cam_Draw(){
 
 		Scene_Render( renderer, m_view );
 
-		if( g_camwindow_globals_private.m_bShowWorkzone && GlobalSelectionSystem().countSelected() != 0 ){
+		if( g_camwindow_globals_private.m_bShowWorkzone && GlobalSelectionSystem().countSelected() != 0 && GlobalSelectionSystem().ManipulatorMode() != SelectionSystem::eUV ){
 			m_draw_workzone.render( renderer, m_state_workzone );
 		}
 
-		renderer.render( m_Camera.modelview, m_Camera.projection );
-	}
-
-	/* size */
-	if( g_camwindow_globals_private.m_bShowSize && GlobalSelectionSystem().countSelected() != 0 ){
-		const AABB bounds = GlobalSelectionSystem().getBoundsSelected();
-		if( bounds.extents.x() != 0 || bounds.extents.y() != 0 || bounds.extents.z() != 0 ){
-			glMatrixMode( GL_PROJECTION );
-			glLoadIdentity();
-			glOrtho( 0, m_Camera.width, 0, m_Camera.height, -100, 100 );
-			glTranslated( m_Camera.width / 2.0, m_Camera.height / 2.0, 0 );
-			glMatrixMode( GL_MODELVIEW );
-			glLoadIdentity();
-			m_draw_size.render( bounds, m_view );
+		if( g_camwindow_globals_private.m_bShowSize && GlobalSelectionSystem().countSelected() != 0 ){
+			m_draw_size.render( renderer, m_state_text, m_view );
 		}
+
+		renderer.render( m_Camera.modelview, m_Camera.projection );
 	}
 
 	// prepare for 2d stuff
