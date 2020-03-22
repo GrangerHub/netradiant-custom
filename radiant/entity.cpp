@@ -75,7 +75,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 void post( const scene::Path& path, scene::Instance& instance ) const {
 	Entity* entity = Node_getEntity( path.top() );
 	if ( entity != 0
-		 && ( instance.childSelected() || Instance_getSelectable( instance )->isSelected() ) ) {
+		 && ( instance.childSelected() || Instance_isSelected( instance ) ) ) {
 		entity->setKeyValue( m_key, m_value );
 	}
 }
@@ -95,7 +95,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 }
 void post( const scene::Path& path, scene::Instance& instance ) const {
 	Entity* entity = Node_getEntity( path.top() );
-	if ( entity != 0 && ( instance.childSelected() || Instance_getSelectable( instance )->isSelected() ) ) {
+	if ( entity != 0 && ( instance.childSelected() || Instance_isSelected( instance ) ) ) {
 		if( path.top().get_pointer() == m_world ){ /* do not want to convert whole worldspawn entity */
 			if( instance.childSelected() && !m_2world ){ /* create an entity from world brushes instead */
 				EntityClass* entityClass = GlobalEntityClassManager().findOrInsert( m_classname, true );
@@ -230,7 +230,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 void post( const scene::Path& path, scene::Instance& instance ) const {
 	Entity* entity = Node_getEntity( path.top() );
 	if ( entity != 0
-		 && Instance_getSelectable( instance )->isSelected()
+		 && Instance_isSelected( instance )
 		 && node_is_group( path.top() )
 		 && !groupPath ) {
 		groupPath = &path;
@@ -251,8 +251,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 	return true;
 }
 void post( const scene::Path& path, scene::Instance& instance ) const {
-	Selectable *selectable = Instance_getSelectable( instance );
-	if ( selectable && selectable->isSelected() ) {
+	if ( Instance_isSelected( instance ) ) {
 		Entity* entity = Node_getEntity( path.top() );
 		if ( entity == 0 && Node_isPrimitive( path.top() ) ) {
 			NodeSmartReference child( path.top().get() );
@@ -585,18 +584,25 @@ void Entity_setColour(){
 	}
 }
 
-const char* misc_model_dialog( GtkWidget* parent ){
+const char* misc_model_dialog( GtkWidget* parent, const char* filepath ){
 	StringOutputStream buffer( 1024 );
 
-	buffer << g_qeglobals.m_userGamePath.c_str() << "models/";
+	if( !string_empty( filepath ) ){
+		const char* root = GlobalFileSystem().findFile( filepath );
+		if( !string_empty( root ) && file_is_directory( root ) )
+			buffer << root << filepath;
+	}
+	if( buffer.empty() ){
+		buffer << g_qeglobals.m_userGamePath.c_str() << "models/";
 
-	if ( !file_readable( buffer.c_str() ) ) {
-		// just go to fsmain
-		buffer.clear();
-		buffer << g_qeglobals.m_userGamePath.c_str() << "/";
+		if ( !file_readable( buffer.c_str() ) ) {
+			// just go to fsmain
+			buffer.clear();
+			buffer << g_qeglobals.m_userGamePath.c_str();
+		}
 	}
 
-	const char *filename = file_dialog( parent, TRUE, "Choose Model", buffer.c_str(), ModelLoader::Name() );
+	const char *filename = file_dialog( parent, true, "Choose Model", buffer.c_str(), ModelLoader::Name() );
 	if ( filename != 0 ) {
 		// use VFS to get the correct relative path
 		const char* relative = path_make_relative( filename, GlobalFileSystem().findRoot( filename ) );
@@ -651,11 +657,9 @@ typedef ReferenceCaller1<EntityCreator, const IntImportCallback&, ShowNamesRatio
 
 
 void ShowTargetNamesImport( EntityCreator& self, bool value ){
-	const bool oldvalue = self.getShowTargetNames();
+	if( self.getShowTargetNames() != value )
+		PreferencesDialog_restartRequired( "Entity Names = Targetnames" ); // technically map reloading or entities recreation do update too, as it's not LatchedValue
 	self.setShowTargetNames( value );
-	if( oldvalue != value ){
-		PreferencesDialog_restartRequired( "Entity Names = Targetnames" );
-	}
 }
 typedef ReferenceCaller1<EntityCreator, bool, ShowTargetNamesImport> ShowTargetNamesImportCaller;
 

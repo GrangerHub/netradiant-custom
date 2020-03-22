@@ -86,6 +86,7 @@
 #include "brushmodule.h"
 #include "brush.h"
 #include "patch.h"
+#include "grid.h"
 
 class NameObserver
 {
@@ -398,11 +399,6 @@ void Map_SetWorldspawn( Map& map, scene::Node* node ){
 }
 
 
-// TTimo
-// need that in a variable, will have to tweak depending on the game
-float g_MaxWorldCoord = 64 * 1024;
-float g_MinWorldCoord = -64 * 1024;
-
 void AddRegionBrushes( void );
 void RemoveRegionBrushes( void );
 
@@ -489,8 +485,9 @@ void FocusViews( const Vector3& point, float angle ){
 	angles[CAMERA_YAW] = angle;
 	Camera_setAngles( camwnd, angles );
 
-	XYWnd* xywnd = g_pParentWnd->GetXYWnd();
-	xywnd->SetOrigin( point );
+	g_pParentWnd->forEachXYWnd( [&point]( XYWnd* xywnd ){
+		xywnd->SetOrigin( point );
+	} );
 }
 
 #include "stringio.h"
@@ -1222,9 +1219,7 @@ AnyInstanceSelected( bool& selected ) : m_selected( selected ){
 	m_selected = false;
 }
 void visit( scene::Instance& instance ) const {
-	Selectable* selectable = Instance_getSelectable( instance );
-	if ( selectable != 0
-		 && selectable->isSelected() ) {
+	if ( Instance_isSelected( instance ) ) {
 		m_selected = true;
 	}
 }
@@ -1473,8 +1468,12 @@ bool g_region_active = false;
 BoolExportCaller g_region_caller( g_region_active );
 ToggleItem g_region_item( g_region_caller );
 
-Vector3 g_region_mins( g_MinWorldCoord, g_MinWorldCoord, g_MinWorldCoord );
-Vector3 g_region_maxs( g_MaxWorldCoord, g_MaxWorldCoord, g_MaxWorldCoord );
+Vector3 g_region_mins;
+Vector3 g_region_maxs;
+void Region_defaultMinMax(){
+	g_region_maxs[0] = g_region_maxs[1] = g_region_maxs[2] = GetMaxGridCoord();
+	g_region_mins[0] = g_region_mins[1] = g_region_mins[2] = -GetMaxGridCoord();
+}
 
 scene::Node* region_sides[6];
 scene::Node* region_startpoint = 0;
@@ -1589,8 +1588,7 @@ void Map_RegionOff(){
 	g_region_active = false;
 	g_region_item.update();
 
-	g_region_maxs[0] = g_region_maxs[1] = g_region_maxs[2] = g_MaxWorldCoord - 64;
-	g_region_mins[0] = g_region_mins[1] = g_region_mins[2] = g_MinWorldCoord + 64;
+	Region_defaultMinMax();
 
 	Scene_Exclude_All( false );
 }
@@ -1819,8 +1817,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 }
 void post( const scene::Path& path, scene::Instance& instance ) const {
 	if ( Node_isPrimitive( path.top() ) ){
-		Selectable* selectable = Instance_getSelectable( instance );
-		if ( selectable && selectable->isSelected() ){
+		if ( Instance_isSelected( instance ) ){
 			NodeSmartReference node( path.top().get() );
 			scene::Traversable* parent_traversable = Node_getTraversable( path.parent() );
 			parent_traversable->erase( node );
@@ -1856,9 +1853,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 	if ( ++m_depth != 1 && path.top().get().isRoot() ) {
 		return false;
 	}
-	Selectable* selectable = Instance_getSelectable( instance );
-	if ( selectable != 0
-		 && selectable->isSelected()
+	if ( Instance_isSelected( instance )
 		 && Node_isPrimitive( path.top() ) ) {
 		++m_count;
 	}
@@ -1982,15 +1977,18 @@ const char* getMapsPath(){
 }
 
 const char* map_open( const char* title ){
-	return file_dialog( GTK_WIDGET( MainFrame_getWindow() ), TRUE, title, getMapsPath(), MapFormat::Name(), true, false, false );
+	const char* path = Map_Unnamed( g_map )? getMapsPath() : g_map.m_name.c_str();
+	return file_dialog( GTK_WIDGET( MainFrame_getWindow() ), true, title, path, MapFormat::Name(), true, false, false );
 }
 
 const char* map_import( const char* title ){
-	return file_dialog( GTK_WIDGET( MainFrame_getWindow() ), TRUE, title, getMapsPath(), MapFormat::Name(), false, true, false );
+	const char* path = Map_Unnamed( g_map )? getMapsPath() : g_map.m_name.c_str();
+	return file_dialog( GTK_WIDGET( MainFrame_getWindow() ), true, title, path, MapFormat::Name(), false, true, false );
 }
 
 const char* map_save( const char* title ){
-	return file_dialog( GTK_WIDGET( MainFrame_getWindow() ), FALSE, title, getMapsPath(), MapFormat::Name(), false, false, true );
+	const char* path = Map_Unnamed( g_map )? getMapsPath() : g_map.m_name.c_str();
+	return file_dialog( GTK_WIDGET( MainFrame_getWindow() ), false, title, path, MapFormat::Name(), false, false, true );
 }
 
 void OpenMap(){
@@ -2064,10 +2062,8 @@ void RegionOff(){
 }
 
 void RegionXY(){
-	const VIEWTYPE viewtype = GlobalXYWnd_getCurrentViewType();
-	const int nDim1 = ( viewtype == YZ ) ? 1 : 0;
-	const int nDim2 = ( viewtype == XY ) ? 1 : 2;
-	const int nDim = static_cast<int>( viewtype );
+	const int nDim = GlobalXYWnd_getCurrentViewType();
+	NDIM1NDIM2( nDim );
 	const XYWnd& wnd = *( g_pParentWnd->ActiveXY() );
 	Vector3 min, max;
 	min[nDim1] = wnd.GetOrigin()[nDim1] - 0.5f * wnd.Width() / wnd.Scale();
@@ -2154,7 +2150,9 @@ void SelectBrush( int entitynum, int brushnum ){
 		Selectable* selectable = Instance_getSelectable( *instance );
 		ASSERT_MESSAGE( selectable != 0, "SelectBrush: path not selectable" );
 		selectable->setSelected( true );
-		g_pParentWnd->GetXYWnd()->PositionView( instance->worldAABB().origin );
+		g_pParentWnd->forEachXYWnd( [instance]( XYWnd* xywnd ){
+			xywnd->SetOrigin( instance->worldAABB().origin );
+		} );
 	}
 }
 

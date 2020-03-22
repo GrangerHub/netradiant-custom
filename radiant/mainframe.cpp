@@ -665,6 +665,31 @@ void Exit(){
 	}
 }
 
+#include "environment.h"
+
+#ifdef WIN32
+#include <process.h>
+#else
+#include <spawn.h>
+#endif
+void Radiant_Restart(){
+	ConfirmModified( "Restart Radiant" ); // user can choose to not save, it's ok
+
+	char *argv[] = { string_clone( environment_get_app_filepath() ),
+						Map_Unnamed( g_map )? NULL : string_clone( Map_Name( g_map ) ),
+						NULL };
+#ifdef WIN32
+	const int status = !_spawnv( P_NOWAIT, argv[0], argv );
+#else
+	const int status = posix_spawn( NULL, argv[0], NULL, NULL, argv, environ );
+#endif
+
+	// quit if radiant successfully started
+	if ( status == 0 ) {
+		gtk_main_quit();
+	}
+}
+
 
 void Undo(){
 	GlobalUndoSystem().undo();
@@ -728,14 +753,7 @@ void Paste(){
 
 void TranslateToCamera(){
 	CamWnd& camwnd = *g_pParentWnd->GetCamWnd();
-	// Work out the delta
-	Vector3 mid;
-	Select_GetMid( mid );
-	//Vector3 delta = vector3_subtracted( vector3_snapped( Camera_getOrigin( camwnd ), GetSnapGridSize() ), mid );
-	Vector3 delta = vector3_snapped( vector3_subtracted( Camera_getOrigin( camwnd ), mid ), GetSnapGridSize() );
-
-	// Move to camera
-	GlobalSelectionSystem().translateSelected( delta );
+	GlobalSelectionSystem().translateSelected( vector3_snapped( Camera_getOrigin( camwnd ) - GlobalSelectionSystem().getBoundsSelected().origin, GetSnapGridSize() ) );
 }
 
 void PasteToCamera(){
@@ -1228,9 +1246,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 	}
 
 	if ( !path.top().get().isRoot() ) {
-		Selectable* selectable = Instance_getSelectable( instance );
-		if ( selectable != 0
-			 && selectable->isSelected() ) {
+		if ( Instance_isSelected( instance ) ) {
 			return false;
 		}
 		if( m_makeUnique && instance.childSelected() ){ /* clone group entity primitives to new group entity */
@@ -1253,9 +1269,7 @@ void post( const scene::Path& path, scene::Instance& instance ) const {
 	}
 
 	if ( !path.top().get().isRoot() ) {
-		Selectable* selectable = Instance_getSelectable( instance );
-		if ( selectable != 0
-			 && selectable->isSelected() ) {
+		if ( Instance_isSelected( instance ) ) {
 			NodeSmartReference clone( Node_Clone( path.top() ) );
 			Map_gatherNamespaced( clone );
 			Node_getTraversable( path.parent().get() )->insert( clone );
@@ -1730,7 +1744,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 	if ( path.top().get().visible() ) {
 		Snappable* snappable = Node_getSnappable( path.top() );
 		if ( snappable != 0
-			 && Instance_getSelectable( instance )->isSelected() ) {
+			 && Instance_isSelected( instance ) ) {
 			snappable->snapto( m_snap );
 		}
 	}
@@ -1753,7 +1767,7 @@ bool pre( const scene::Path& path, scene::Instance& instance ) const {
 	if ( path.top().get().visible() ) {
 		ComponentSnappable* componentSnappable = Instance_getComponentSnappable( instance );
 		if ( componentSnappable != 0
-			 && Instance_getSelectable( instance )->isSelected() ) {
+			 && Instance_isSelected( instance ) ) {
 			componentSnappable->snapComponents( m_snap );
 		}
 	}
@@ -1945,33 +1959,11 @@ void GlobalCamera_UpdateWindow(){
 	}
 }
 
-void XY_UpdateWindow( MainFrame& mainframe ){
-	if ( mainframe.GetXYWnd() != 0 ) {
-		XYWnd_Update( *mainframe.GetXYWnd() );
-	}
-}
-
-void XZ_UpdateWindow( MainFrame& mainframe ){
-	if ( mainframe.GetXZWnd() != 0 ) {
-		XYWnd_Update( *mainframe.GetXZWnd() );
-	}
-}
-
-void YZ_UpdateWindow( MainFrame& mainframe ){
-	if ( mainframe.GetYZWnd() != 0 ) {
-		XYWnd_Update( *mainframe.GetYZWnd() );
-	}
-}
-
-void XY_UpdateAllWindows( MainFrame& mainframe ){
-	XY_UpdateWindow( mainframe );
-	XZ_UpdateWindow( mainframe );
-	YZ_UpdateWindow( mainframe );
-}
-
 void XY_UpdateAllWindows(){
 	if ( g_pParentWnd != 0 ) {
-		XY_UpdateAllWindows( *g_pParentWnd );
+		g_pParentWnd->forEachXYWnd( []( XYWnd* xywnd ){
+			XYWnd_Update( *xywnd );
+		} );
 	}
 }
 
@@ -3196,6 +3188,7 @@ void MainFrame::Create(){
 			}
 
 			CamWnd_setParent( *m_pCamWnd, window );
+			CamWnd_Shown_Construct( window );
 			/* workaround for gtk 2.24 issue: not displayed glwidget after toggle */
 			g_object_set_data( G_OBJECT( window ), "glwidget", CamWnd_getWidget( *m_pCamWnd ) );
 
@@ -3321,7 +3314,7 @@ void MainFrame::Create(){
 	SetActiveXY( m_pXYWnd );
 
 	AddGridChangeCallback( SetGridStatusCaller( *this ) );
-	AddGridChangeCallback( ReferenceCaller<MainFrame, XY_UpdateAllWindows>( *this ) );
+	AddGridChangeCallback( FreeCaller<XY_UpdateAllWindows>() );
 
 	g_defaultToolMode = DragMode;
 	g_defaultToolMode();
@@ -3513,40 +3506,40 @@ void Layout_constructPreferences( PreferencesPage& page ){
 		page.appendRadioIcons(
 			"Window Layout",
 			STRING_ARRAY_RANGE( layouts ),
-			LatchedIntImportCaller( g_Layout_viewStyle ),
+			LatchedImportCaller( g_Layout_viewStyle ),
 			IntExportCaller( g_Layout_viewStyle.m_latched )
 			);
 	}
 	page.appendCheckBox(
 		"", "Detachable Menus",
-		LatchedBoolImportCaller( g_Layout_enableDetachableMenus ),
+		LatchedImportCaller( g_Layout_enableDetachableMenus ),
 		BoolExportCaller( g_Layout_enableDetachableMenus.m_latched )
 		);
 	page.appendCheckBox(
 		"", "Main Toolbar",
-		LatchedBoolImportCaller( g_Layout_enableMainToolbar ),
+		LatchedImportCaller( g_Layout_enableMainToolbar ),
 		BoolExportCaller( g_Layout_enableMainToolbar.m_latched )
 		);
 	if ( !string_empty( g_pGameDescription->getKeyValue( "no_patch" ) ) ) {
 		page.appendCheckBox(
 			"", "Patch Toolbar",
-			LatchedBoolImportCaller( g_Layout_enablePatchToolbar ),
+			LatchedImportCaller( g_Layout_enablePatchToolbar ),
 			BoolExportCaller( g_Layout_enablePatchToolbar.m_latched )
 			);
 	}
 	page.appendCheckBox(
 		"", "Plugin Toolbar",
-		LatchedBoolImportCaller( g_Layout_enablePluginToolbar ),
+		LatchedImportCaller( g_Layout_enablePluginToolbar ),
 		BoolExportCaller( g_Layout_enablePluginToolbar.m_latched )
 		);
 	page.appendCheckBox(
 		"", "Filter Toolbar",
-		LatchedBoolImportCaller( g_Layout_enableFilterToolbar ),
+		LatchedImportCaller( g_Layout_enableFilterToolbar ),
 		BoolExportCaller( g_Layout_enableFilterToolbar.m_latched )
 		);
 	page.appendCheckBox(
 		"", "Single Scrollable Toolbar",
-		LatchedBoolImportCaller( g_Layout_SingleToolbar ),
+		LatchedImportCaller( g_Layout_SingleToolbar ),
 		BoolExportCaller( g_Layout_SingleToolbar.m_latched )
 		);
 }
@@ -3702,13 +3695,13 @@ void MainFrame_Construct(){
 	typedef FreeCaller1<const Selectable&, ComponentMode_SelectionChanged> ComponentModeSelectionChangedCaller;
 	GlobalSelectionSystem().addSelectionChangeCallback( ComponentModeSelectionChangedCaller() );
 
-	GlobalPreferenceSystem().registerPreference( "DetachableMenus", BoolImportStringCaller( g_Layout_enableDetachableMenus.m_latched ), BoolExportStringCaller( g_Layout_enableDetachableMenus.m_latched ) );
-	GlobalPreferenceSystem().registerPreference( "MainToolBar", BoolImportStringCaller( g_Layout_enableMainToolbar.m_latched ), BoolExportStringCaller( g_Layout_enableMainToolbar.m_latched ) );
-	GlobalPreferenceSystem().registerPreference( "PatchToolBar", BoolImportStringCaller( g_Layout_enablePatchToolbar.m_latched ), BoolExportStringCaller( g_Layout_enablePatchToolbar.m_latched ) );
-	GlobalPreferenceSystem().registerPreference( "PluginToolBar", BoolImportStringCaller( g_Layout_enablePluginToolbar.m_latched ), BoolExportStringCaller( g_Layout_enablePluginToolbar.m_latched ) );
-	GlobalPreferenceSystem().registerPreference( "FilterToolBar", BoolImportStringCaller( g_Layout_enableFilterToolbar.m_latched ), BoolExportStringCaller( g_Layout_enableFilterToolbar.m_latched ) );
-	GlobalPreferenceSystem().registerPreference( "SingleToolBar", BoolImportStringCaller( g_Layout_SingleToolbar.m_latched ), BoolExportStringCaller( g_Layout_SingleToolbar.m_latched ) );
-	GlobalPreferenceSystem().registerPreference( "QE4StyleWindows", IntImportStringCaller( g_Layout_viewStyle.m_latched ), IntExportStringCaller( g_Layout_viewStyle.m_latched ) );
+	GlobalPreferenceSystem().registerPreference( "DetachableMenus", makeBoolStringImportCallback( LatchedAssignCaller( g_Layout_enableDetachableMenus ) ), BoolExportStringCaller( g_Layout_enableDetachableMenus.m_latched ) );
+	GlobalPreferenceSystem().registerPreference( "MainToolBar", makeBoolStringImportCallback( LatchedAssignCaller( g_Layout_enableMainToolbar ) ), BoolExportStringCaller( g_Layout_enableMainToolbar.m_latched ) );
+	GlobalPreferenceSystem().registerPreference( "PatchToolBar", makeBoolStringImportCallback( LatchedAssignCaller( g_Layout_enablePatchToolbar ) ), BoolExportStringCaller( g_Layout_enablePatchToolbar.m_latched ) );
+	GlobalPreferenceSystem().registerPreference( "PluginToolBar", makeBoolStringImportCallback( LatchedAssignCaller( g_Layout_enablePluginToolbar ) ), BoolExportStringCaller( g_Layout_enablePluginToolbar.m_latched ) );
+	GlobalPreferenceSystem().registerPreference( "FilterToolBar", makeBoolStringImportCallback( LatchedAssignCaller( g_Layout_enableFilterToolbar ) ), BoolExportStringCaller( g_Layout_enableFilterToolbar.m_latched ) );
+	GlobalPreferenceSystem().registerPreference( "SingleToolBar", makeBoolStringImportCallback( LatchedAssignCaller( g_Layout_SingleToolbar ) ), BoolExportStringCaller( g_Layout_SingleToolbar.m_latched ) );
+	GlobalPreferenceSystem().registerPreference( "QE4StyleWindows", makeIntStringImportCallback( LatchedAssignCaller( g_Layout_viewStyle ) ), IntExportStringCaller( g_Layout_viewStyle.m_latched ) );
 	GlobalPreferenceSystem().registerPreference( "XYHeight", IntImportStringCaller( g_layout_globals.nXYHeight ), IntExportStringCaller( g_layout_globals.nXYHeight ) );
 	GlobalPreferenceSystem().registerPreference( "XYWidth", IntImportStringCaller( g_layout_globals.nXYWidth ), IntExportStringCaller( g_layout_globals.nXYWidth ) );
 	GlobalPreferenceSystem().registerPreference( "CamWidth", IntImportStringCaller( g_layout_globals.nCamWidth ), IntExportStringCaller( g_layout_globals.nCamWidth ) );
@@ -3749,15 +3742,6 @@ void MainFrame_Construct(){
 		g_strEnginePath = path.c_str();
 	}
 
-
-
-	g_Layout_viewStyle.useLatched();
-	g_Layout_enableDetachableMenus.useLatched();
-	g_Layout_enableMainToolbar.useLatched();
-	g_Layout_enablePatchToolbar.useLatched();
-	g_Layout_enablePluginToolbar.useLatched();
-	g_Layout_enableFilterToolbar.useLatched();
-	g_Layout_SingleToolbar.useLatched();
 
 	Layout_registerPreferencesPage();
 	Paths_registerPreferencesPage();

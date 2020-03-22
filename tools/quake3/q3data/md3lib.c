@@ -20,14 +20,7 @@
  */
 
 #include <assert.h>
-#ifdef WIN32
-#include <io.h>
-#endif
 #include "md3lib.h"
-
-#if defined ( __linux__ ) || defined ( __APPLE__ )
-#define filelength Q_filelength
-#endif
 
 /*
 ** MD3_ComputeTagFromTri
@@ -70,42 +63,15 @@ void MD3_ComputeTagFromTri( md3Tag_t *pTag, const float pTri[3][3] ){
 		Error( "invalid tag triangle, must be a right triangle with unequal length sides" );
 	}
 #endif
-	if ( len[0] > len[1] && len[0] > len[2] ) {
-		hypotSide = 0;
-		origin = 2;
-	}
-	else if ( len[1] > len[0] && len[1] > len[2] ) {
-		hypotSide = 1;
-		origin = 0;
-	}
-	else if ( len[2] > len[0] && len[2] > len[1] ) {
-		hypotSide = 2;
-		origin = 1;
-	}
+	hypotSide = len[0] > len[1]? ( len[0] > len[2]? 0 : 2 ) : ( len[1] > len[2]? 1 : 2 );
+	origin = ( hypotSide + 2 ) % 3;
 	len[hypotSide] = -1;
 
-	if ( len[0] > len[1] && len[0] > len[2] ) {
-		longestSide = 0;
-	}
-	else if ( len[1] > len[0] && len[1] > len[2] ) {
-		longestSide = 1;
-	}
-	else if ( len[2] > len[0] && len[2] > len[1] ) {
-		longestSide = 2;
-	}
+	longestSide = len[0] > len[1]? ( len[0] > len[2]? 0 : 2 ) : ( len[1] > len[2]? 1 : 2 );
 	len[longestSide] = -1;
 
-	if ( len[0] > len[1] && len[0] > len[2] ) {
-		shortestSide = 0;
-	}
-	else if ( len[1] > len[0] && len[1] > len[2] ) {
-		shortestSide = 1;
-	}
-	else if ( len[2] > len[0] && len[2] > len[1] ) {
-		shortestSide = 2;
-	}
+	shortestSide = len[0] > len[1]? ( len[0] > len[2]? 0 : 2 ) : ( len[1] > len[2]? 1 : 2 );
 	len[shortestSide] = -1;
-
 
 
 //	VectorNormalize( sides[shortestSide], axes[0] );
@@ -142,15 +108,15 @@ void MD3_Dump( const char *filename ){
 	FILE *fp;
 	void *_buffer;
 	void *buffer;
-	long fileSize;
+	int fileSize;
 	int i;
 
 	if ( ( fp = fopen( filename, "rb" ) ) == 0 ) {
 		Error( "Unable to open '%s'\n", filename );
 	}
 
-	fileSize = filelength( fileno( fp ) );
-	_buffer = malloc( filelength( fileno( fp ) ) );
+	fileSize = Q_filelength( fp );
+	_buffer = malloc( fileSize );
 	fread( _buffer, fileSize, 1, fp );
 	fclose( fp );
 

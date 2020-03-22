@@ -90,24 +90,17 @@ ibspBrushSide_t;
 
 
 static void CopyBrushSidesLump( ibspHeader_t *header ){
-	int i;
-	ibspBrushSide_t *in;
-	bspBrushSide_t  *out;
-
-
+	const ibspBrushSide_t *in = GetLump( (bspHeader_t*) header, LUMP_BRUSHSIDES );
 	/* get count */
 	numBSPBrushSides = GetLumpElements( (bspHeader_t*) header, LUMP_BRUSHSIDES, sizeof( *in ) );
-
 	/* copy */
-	in = GetLump( (bspHeader_t*) header, LUMP_BRUSHSIDES );
-	for ( i = 0; i < numBSPBrushSides; i++ )
+	AUTOEXPAND_BY_REALLOC_BSP( BrushSides, 1024 );
+	for ( int i = 0; i < numBSPBrushSides; ++i, ++in )
 	{
-		AUTOEXPAND_BY_REALLOC( bspBrushSides, i, allocatedBSPBrushSides, 1024 );
-		out = &bspBrushSides[i];
+		bspBrushSide_t *out = &bspBrushSides[i];
 		out->planeNum = in->planeNum;
 		out->shaderNum = in->shaderNum;
 		out->surfaceNum = -1;
-		in++;
 	}
 }
 
@@ -120,8 +113,7 @@ static void AddBrushSidesLump( FILE *file, ibspHeader_t *header ){
 
 	/* allocate output buffer */
 	size = numBSPBrushSides * sizeof( *buffer );
-	buffer = safe_malloc( size );
-	memset( buffer, 0, size );
+	buffer = safe_calloc( size );
 
 	/* convert */
 	in = bspBrushSides;
@@ -232,8 +224,7 @@ static void AddDrawSurfacesLump( FILE *file, ibspHeader_t *header ){
 
 	/* allocate output buffer */
 	size = numBSPDrawSurfaces * sizeof( *buffer );
-	buffer = safe_malloc( size );
-	memset( buffer, 0, size );
+	buffer = safe_calloc( size );
 
 	/* convert */
 	in = bspDrawSurfaces;
@@ -330,8 +321,7 @@ static void AddDrawVertsLump( FILE *file, ibspHeader_t *header ){
 
 	/* allocate output buffer */
 	size = numBSPDrawVerts * sizeof( *buffer );
-	buffer = safe_malloc( size );
-	memset( buffer, 0, size );
+	buffer = safe_calloc( size );
 
 	/* convert */
 	in = bspDrawVerts;
@@ -385,8 +375,7 @@ static void CopyLightGridLumps( ibspHeader_t *header ){
 	numBSPGridPoints = GetLumpElements( (bspHeader_t*) header, LUMP_LIGHTGRID, sizeof( *in ) );
 
 	/* allocate buffer */
-	bspGridPoints = safe_malloc( numBSPGridPoints * sizeof( *bspGridPoints ) );
-	memset( bspGridPoints, 0, numBSPGridPoints * sizeof( *bspGridPoints ) );
+	bspGridPoints = safe_calloc( numBSPGridPoints * sizeof( *bspGridPoints ) );
 
 	/* copy */
 	in = GetLump( (bspHeader_t*) header, LUMP_LIGHTGRID );
@@ -463,10 +452,10 @@ void LoadIBSPFile( const char *filename ){
 	SwapBlock( (int*) ( (byte*) header + sizeof( int ) ), sizeof( *header ) - sizeof( int ) );
 
 	/* make sure it matches the format we're trying to load */
-	if ( force == qfalse && *( (int*) header->ident ) != *( (int*) game->bspIdent ) ) {
+	if ( !force && *( (int*) header->ident ) != *( (int*) game->bspIdent ) ) {
 		Error( "%s is not a %s file", filename, game->bspIdent );
 	}
-	if ( force == qfalse && header->version != game->bspVersion ) {
+	if ( !force && header->version != game->bspVersion ) {
 		Error( "%s is version %d, not %d", filename, header->version, game->bspVersion );
 	}
 
@@ -508,7 +497,7 @@ void LoadIBSPFile( const char *filename ){
 	CopyLightGridLumps( header );
 
 	/* advertisements */
-	if ( header->version == 47 && !strcmp( game->arg, "quakelive" ) ) { // quake live's bsp version minus wolf, et, etut
+	if ( header->version == 47 && strEqual( game->arg, "quakelive" ) ) { // quake live's bsp version minus wolf, et, etut
 		numBSPAds = CopyLump( (bspHeader_t*) header, LUMP_ADVERTISEMENTS, bspAds, sizeof( bspAdvertisement_t ) );
 	}
 	else{
@@ -535,10 +524,10 @@ void PartialLoadIBSPFile( const char *filename ){
 	SwapBlock( (int*) ( (byte*) header + sizeof( int ) ), sizeof( *header ) - sizeof( int ) );
 
 	/* make sure it matches the format we're trying to load */
-	if ( force == qfalse && *( (int*) header->ident ) != *( (int*) game->bspIdent ) ) {
+	if ( !force && *( (int*) header->ident ) != *( (int*) game->bspIdent ) ) {
 		Error( "%s is not a %s file", filename, game->bspIdent );
 	}
-	if ( force == qfalse && header->version != game->bspVersion ) {
+	if ( !force && header->version != game->bspVersion ) {
 		Error( "%s is version %d, not %d", filename, header->version, game->bspVersion );
 	}
 
@@ -582,7 +571,8 @@ void WriteIBSPFile( const char *filename ){
 
 	/* add marker lump */
 	time( &t );
-	sprintf( marker, "I LOVE MY Q3MAP2 %s on %s)", Q3MAP_VERSION, asctime( localtime( &t ) ) );
+	/* asctime adds an implicit trailing \n */
+	sprintf( marker, "I LOVE MY Q3MAP2 %s on %s", Q3MAP_VERSION, asctime( localtime( &t ) ) );
 	AddLump( file, (bspHeader_t*) header, 0, marker, strlen( marker ) + 1 );
 
 	/* add lumps */

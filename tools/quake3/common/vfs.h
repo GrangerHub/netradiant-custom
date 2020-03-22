@@ -36,6 +36,7 @@
 #if defined ( __linux__ ) || defined ( __APPLE__ )
 #include <dirent.h>
 #include <unistd.h>
+#include <linux/limits.h>
 #else
 #include <wtypes.h>
 #include <io.h>
@@ -55,9 +56,10 @@ void vfsInitDirectory( const char *path );
 void vfsShutdown();
 int vfsGetFileCount( const char *filename );
 int vfsLoadFile( const char *filename, void **buffer, int index );
-void vfsListShaderFiles( char* list, int *num );
-qboolean vfsPackFile( const char *filename, const char *packname, const int compLevel );
-qboolean vfsPackFile_Absolute_Path( const char *filepath, const char *filename, const char *packname, const int compLevel );
+typedef struct StrList_s StrList;
+void vfsListShaderFiles( StrList* list, void pushStringCallback( StrList* list, const char* string ) );
+bool vfsPackFile( const char *filename, const char *packname, const int compLevel );
+bool vfsPackFile_Absolute_Path( const char *filepath, const char *filename, const char *packname, const int compLevel );
 
 extern char g_strForbiddenDirs[VFS_MAXDIRS][PATH_MAX + 1];
 extern int g_numForbiddenDirs;

@@ -59,29 +59,30 @@
    based on WriteTGA() from imagelib.c
  */
 
-void WriteTGA24( char *filename, byte *data, int width, int height, qboolean flip ){
-	int i, c;
-	byte    *buffer, *in;
+void WriteTGA24( char *filename, byte *data, int width, int height, bool flip ){
+	int i;
+	const int headSz = 18;
+	const int sz = width * height * 3 + headSz;
+	byte    *buffer, *pix, *in;
 	FILE    *file;
 
-
 	/* allocate a buffer and set it up */
-	buffer = safe_malloc( width * height * 3 + 18 );
-	memset( buffer, 0, 18 );
-	buffer[ 2 ] = 2;
+	buffer = safe_malloc( sz );
+	pix = buffer + headSz;
+	memset( buffer, 0, headSz );
+	buffer[ 2 ] = 2;		// uncompressed type
 	buffer[ 12 ] = width & 255;
 	buffer[ 13 ] = width >> 8;
 	buffer[ 14 ] = height & 255;
 	buffer[ 15 ] = height >> 8;
-	buffer[ 16 ] = 24;
+	buffer[ 16 ] = 24;	// pixel size
 
 	/* swap rgb to bgr */
-	c = ( width * height * 3 ) + 18;
-	for ( i = 18; i < c; i += 3 )
+	for ( i = 0; i < sz - headSz; i += 3 )
 	{
-		buffer[ i ] = data[ i - 18 + 2 ];       /* blue */
-		buffer[ i + 1 ] = data[ i - 18 + 1 ];   /* green */
-		buffer[ i + 2 ] = data[ i - 18 + 0 ];   /* red */
+		pix[ i + 0 ] = data[ i + 2 ];   /* blue */
+		pix[ i + 1 ] = data[ i + 1 ];   /* green */
+		pix[ i + 2 ] = data[ i + 0 ];   /* red */
 	}
 
 	/* write it and free the buffer */
@@ -92,12 +93,12 @@ void WriteTGA24( char *filename, byte *data, int width, int height, qboolean fli
 
 	/* flip vertically? */
 	if ( flip ) {
-		fwrite( buffer, 1, 18, file );
-		for ( in = buffer + ( ( height - 1 ) * width * 3 ) + 18; in >= buffer; in -= ( width * 3 ) )
+		fwrite( buffer, 1, headSz, file );
+		for ( in = pix + ( ( height - 1 ) * width * 3 ); in >= pix; in -= ( width * 3 ) )
 			fwrite( in, 1, ( width * 3 ), file );
 	}
 	else{
-		fwrite( buffer, 1, c, file );
+		fwrite( buffer, 1, sz, file );
 	}
 
 	/* close the file */
@@ -140,7 +141,7 @@ void ExportLightmaps( void ){
 		/* write a tga image out */
 		sprintf( filename, "%s/lightmap_%04d.tga", dirname, i );
 		Sys_Printf( "Writing %s\n", filename );
-		WriteTGA24( filename, lightmap, game->lightmapSize, game->lightmapSize, qfalse );
+		WriteTGA24( filename, lightmap, game->lightmapSize, game->lightmapSize, false );
 	}
 }
 
@@ -153,15 +154,14 @@ void ExportLightmaps( void ){
 
 int ExportLightmapsMain( int argc, char **argv ){
 	/* arg checking */
-	if ( argc < 1 ) {
-		Sys_Printf( "Usage: q3map -export [-v] <mapname>\n" );
+	if ( argc < 2 ) {
+		Sys_Printf( "Usage: q3map2 -export [-v] <mapname>\n" );
 		return 0;
 	}
 
 	/* do some path mangling */
 	strcpy( source, ExpandArg( argv[ argc - 1 ] ) );
-	StripExtension( source );
-	DefaultExtension( source, ".bsp" );
+	path_set_extension( source, ".bsp" );
 
 	/* load the bsp */
 	Sys_Printf( "Loading %s\n", source );
@@ -188,15 +188,14 @@ int ImportLightmapsMain( int argc, char **argv ){
 
 
 	/* arg checking */
-	if ( argc < 1 ) {
-		Sys_Printf( "Usage: q3map -import [-v] <mapname>\n" );
+	if ( argc < 2 ) {
+		Sys_Printf( "Usage: q3map2 -import [-v] <mapname>\n" );
 		return 0;
 	}
 
 	/* do some path mangling */
 	strcpy( source, ExpandArg( argv[ argc - 1 ] ) );
-	StripExtension( source );
-	DefaultExtension( source, ".bsp" );
+	path_set_extension( source, ".bsp" );
 
 	/* load the bsp */
 	Sys_Printf( "Loading %s\n", source );
@@ -459,7 +458,7 @@ void FinishRawLightmap( rawLightmap_t *lm ){
    based on AllocateLightmapForPatch()
  */
 
-qboolean AddPatchToRawLightmap( int num, rawLightmap_t *lm ){
+bool AddPatchToRawLightmap( int num, rawLightmap_t *lm ){
 	bspDrawSurface_t    *ds;
 	surfaceInfo_t       *info;
 	int x, y;
@@ -467,11 +466,11 @@ qboolean AddPatchToRawLightmap( int num, rawLightmap_t *lm ){
 	vec3_t delta;
 	mesh_t src, *subdivided, *mesh;
 	float sBasis, tBasis, s, t;
-	float length, widthTable[ MAX_EXPANDED_AXIS ], heightTable[ MAX_EXPANDED_AXIS ];
+	float length, widthTable[ MAX_EXPANDED_AXIS ] = {0}, heightTable[ MAX_EXPANDED_AXIS ] = {0};
 
 
 	/* patches finish a raw lightmap */
-	lm->finished = qtrue;
+	lm->finished = true;
 
 	/* get surface and info  */
 	ds = &bspDrawSurfaces[ num ];
@@ -491,8 +490,6 @@ qboolean AddPatchToRawLightmap( int num, rawLightmap_t *lm ){
 
 	/* find the longest distance on each row/column */
 	verts = mesh->verts;
-	memset( widthTable, 0, sizeof( widthTable ) );
-	memset( heightTable, 0, sizeof( heightTable ) );
 	for ( y = 0; y < mesh->height; y++ )
 	{
 		for ( x = 0; x < mesh->width; x++ )
@@ -551,8 +548,8 @@ qboolean AddPatchToRawLightmap( int num, rawLightmap_t *lm ){
 	FreeMesh( mesh );
 
 	/* set the lightmap texture coordinates in yDrawVerts */
-	lm->wrap[ 0 ] = qtrue;
-	lm->wrap[ 1 ] = qtrue;
+	lm->wrap[ 0 ] = true;
+	lm->wrap[ 1 ] = true;
 	verts = &yDrawVerts[ ds->firstVert ];
 	for ( y = 0; y < ds->patchHeight; y++ )
 	{
@@ -564,12 +561,12 @@ qboolean AddPatchToRawLightmap( int num, rawLightmap_t *lm ){
 			verts[ ( y * ds->patchWidth ) + x ].lightmap[ 0 ][ 1 ] = t * superSample;
 
 			if ( y == 0 && !VectorCompare( verts[ x ].xyz, verts[ ( ( ds->patchHeight - 1 ) * ds->patchWidth ) + x ].xyz ) ) {
-				lm->wrap[ 1 ] = qfalse;
+				lm->wrap[ 1 ] = false;
 			}
 		}
 
 		if ( !VectorCompare( verts[ ( y * ds->patchWidth ) ].xyz, verts[ ( y * ds->patchWidth ) + ( ds->patchWidth - 1 ) ].xyz ) ) {
-			lm->wrap[ 0 ] = qfalse;
+			lm->wrap[ 0 ] = false;
 		}
 	}
 
@@ -584,7 +581,7 @@ qboolean AddPatchToRawLightmap( int num, rawLightmap_t *lm ){
 	numPatchesLightmapped++;
 
 	/* return */
-	return qtrue;
+	return true;
 }
 
 
@@ -595,7 +592,7 @@ qboolean AddPatchToRawLightmap( int num, rawLightmap_t *lm ){
    based on AllocateLightmapForSurface()
  */
 
-qboolean AddSurfaceToRawLightmap( int num, rawLightmap_t *lm ){
+bool AddSurfaceToRawLightmap( int num, rawLightmap_t *lm ){
 	bspDrawSurface_t    *ds, *ds2;
 	surfaceInfo_t       *info;
 	int num2, n, i, axisNum;
@@ -616,8 +613,8 @@ qboolean AddSurfaceToRawLightmap( int num, rawLightmap_t *lm ){
 	/* does this raw lightmap already have any surfaces? */
 	if ( lm->numLightSurfaces > 1 ) {
 		/* surface and raw lightmap must have the same lightmap projection axis */
-		if ( VectorCompare( info->axis, lm->axis ) == qfalse ) {
-			return qfalse;
+		if ( !VectorCompare( info->axis, lm->axis ) ) {
+			return false;
 		}
 
 		/* match identical attributes */
@@ -629,36 +626,36 @@ qboolean AddSurfaceToRawLightmap( int num, rawLightmap_t *lm ){
 			 info->si->lmBrightness != lm->brightness ||
 			 info->si->lmFilterRadius != lm->filterRadius ||
 			 info->si->splotchFix != lm->splotchFix ) {
-			return qfalse;
+			return false;
 		}
 
 		/* surface bounds must intersect with raw lightmap bounds */
 		for ( i = 0; i < 3; i++ )
 		{
 			if ( info->mins[ i ] > lm->maxs[ i ] ) {
-				return qfalse;
+				return false;
 			}
 			if ( info->maxs[ i ] < lm->mins[ i ] ) {
-				return qfalse;
+				return false;
 			}
 		}
 
 		/* plane check (fixme: allow merging of nonplanars) */
-		if ( info->si->lmMergable == qfalse ) {
+		if ( !info->si->lmMergable ) {
 			if ( info->plane == NULL || lm->plane == NULL ) {
-				return qfalse;
+				return false;
 			}
 
 			/* compare planes */
 			for ( i = 0; i < 4; i++ )
 				if ( fabs( info->plane[ i ] - lm->plane[ i ] ) > EQUAL_EPSILON ) {
-					return qfalse;
+					return false;
 				}
 		}
 
 		/* debug code hacking */
 		//%	if( lm->numLightSurfaces > 1 )
-		//%		return qfalse;
+		//%		return false;
 	}
 
 	/* set plane */
@@ -771,7 +768,7 @@ qboolean AddSurfaceToRawLightmap( int num, rawLightmap_t *lm ){
 	if ( faxis[ axisNum ] == 0.0f ) {
 		Sys_Warning( "ProjectSurfaceLightmap: Chose a 0 valued axis\n" );
 		lm->w = lm->h = 0;
-		return qfalse;
+		return false;
 	}
 
 	/* store the axis number in the lightmap */
@@ -826,8 +823,7 @@ qboolean AddSurfaceToRawLightmap( int num, rawLightmap_t *lm ){
 	/* for planar surfaces, create lightmap vectors for st->xyz conversion */
 	if ( VectorLength( ds->lightmapVecs[ 2 ] ) || 1 ) {  /* ydnar: can't remember what exactly i was thinking here... */
 		/* allocate space for the vectors */
-		lm->vecs = safe_malloc( 3 * sizeof( vec3_t ) );
-		memset( lm->vecs, 0, 3 * sizeof( vec3_t ) );
+		lm->vecs = safe_calloc( 3 * sizeof( vec3_t ) );
 		VectorCopy( ds->lightmapVecs[ 2 ], lm->vecs[ 2 ] );
 
 		/* project stepped lightmap blocks and subtract to get planevecs */
@@ -864,7 +860,7 @@ qboolean AddSurfaceToRawLightmap( int num, rawLightmap_t *lm ){
 	}
 
 	/* return */
-	return qtrue;
+	return true;
 }
 
 
@@ -976,7 +972,7 @@ void SetupSurfaceLightmaps( void ){
 	bspDrawSurface_t    *ds;
 	surfaceInfo_t       *info, *info2;
 	rawLightmap_t       *lm;
-	qboolean added;
+	bool added;
 	vec3_t mapSize, entityOrigin;
 
 
@@ -998,18 +994,15 @@ void SetupSurfaceLightmaps( void ){
 	/* allocate a list of surface clusters */
 	numSurfaceClusters = 0;
 	maxSurfaceClusters = numBSPLeafSurfaces;
-	surfaceClusters = safe_malloc( maxSurfaceClusters * sizeof( *surfaceClusters ) );
-	memset( surfaceClusters, 0, maxSurfaceClusters * sizeof( *surfaceClusters ) );
+	surfaceClusters = safe_calloc( maxSurfaceClusters * sizeof( *surfaceClusters ) );
 
 	/* allocate a list for per-surface info */
-	surfaceInfos = safe_malloc( numBSPDrawSurfaces * sizeof( *surfaceInfos ) );
-	memset( surfaceInfos, 0, numBSPDrawSurfaces * sizeof( *surfaceInfos ) );
+	surfaceInfos = safe_calloc( numBSPDrawSurfaces * sizeof( *surfaceInfos ) );
 	for ( i = 0; i < numBSPDrawSurfaces; i++ )
 		surfaceInfos[ i ].childSurfaceNum = -1;
 
 	/* allocate a list of surface indexes to be sorted */
-	sortSurfaces = safe_malloc( numBSPDrawSurfaces * sizeof( int ) );
-	memset( sortSurfaces, 0, numBSPDrawSurfaces * sizeof( int ) );
+	sortSurfaces = safe_calloc( numBSPDrawSurfaces * sizeof( int ) );
 
 	/* walk each model in the bsp */
 	for ( i = 0; i < numBSPModels; i++ )
@@ -1110,13 +1103,13 @@ void SetupSurfaceLightmaps( void ){
 			if ( ds->surfaceType == MST_TRIANGLE_SOUP ||
 				 ds->surfaceType == MST_FOLIAGE ||
 				( info->si->compileFlags & C_VERTEXLIT ) ||
-				nolm == qtrue ) {
+				nolm ) {
 				numSurfsVertexLit++;
 			}
 			else
 			{
 				numSurfsLightmapped++;
-				info->hasLightmap = qtrue;
+				info->hasLightmap = true;
 			}
 		}
 	}
@@ -1130,14 +1123,12 @@ void SetupSurfaceLightmaps( void ){
 
 	/* allocate a list of surfaces that would go into raw lightmaps */
 	numLightSurfaces = 0;
-	lightSurfaces = safe_malloc( numSurfsLightmapped * sizeof( int ) );
-	memset( lightSurfaces, 0, numSurfsLightmapped * sizeof( int ) );
+	lightSurfaces = safe_calloc( numSurfsLightmapped * sizeof( int ) );
 
 	/* allocate a list of raw lightmaps */
 	numRawSuperLuxels = 0;
 	numRawLightmaps = 0;
-	rawLightmaps = safe_malloc( numSurfsLightmapped * sizeof( *rawLightmaps ) );
-	memset( rawLightmaps, 0, numSurfsLightmapped * sizeof( *rawLightmaps ) );
+	rawLightmaps = safe_calloc( numSurfsLightmapped * sizeof( *rawLightmaps ) );
 
 	/* walk the list of sorted surfaces */
 	for ( i = 0; i < numBSPDrawSurfaces; i++ )
@@ -1146,7 +1137,7 @@ void SetupSurfaceLightmaps( void ){
 		num = sortSurfaces[ i ];
 		ds = &bspDrawSurfaces[ num ];
 		info = &surfaceInfos[ num ];
-		if ( info->hasLightmap == qfalse || info->lm != NULL || info->parentSurfaceNum >= 0 ) {
+		if ( !info->hasLightmap || info->lm != NULL || info->parentSurfaceNum >= 0 ) {
 			continue;
 		}
 
@@ -1187,24 +1178,24 @@ void SetupSurfaceLightmaps( void ){
 		info->lm = lm;
 
 		/* do an exhaustive merge */
-		added = qtrue;
+		added = true;
 		while ( added )
 		{
 			/* walk the list of surfaces again */
-			added = qfalse;
-			for ( j = i + 1; j < numBSPDrawSurfaces && lm->finished == qfalse; j++ )
+			added = false;
+			for ( j = i + 1; j < numBSPDrawSurfaces && !lm->finished; j++ )
 			{
 				/* get info and attempt early out */
 				num2 = sortSurfaces[ j ];
 				info2 = &surfaceInfos[ num2 ];
-				if ( info2->hasLightmap == qfalse || info2->lm != NULL ) {
+				if ( !info2->hasLightmap || info2->lm != NULL ) {
 					continue;
 				}
 
 				/* add the surface to the raw lightmap */
 				if ( AddSurfaceToRawLightmap( num2, lm ) ) {
 					info2->lm = lm;
-					added = qtrue;
+					added = true;
 				}
 				else
 				{
@@ -1226,10 +1217,8 @@ void SetupSurfaceLightmaps( void ){
 	/* allocate vertex luxel storage */
 	for ( k = 0; k < MAX_LIGHTMAPS; k++ )
 	{
-		vertexLuxels[ k ] = safe_malloc( numBSPDrawVerts * VERTEX_LUXEL_SIZE * sizeof( float ) );
-		memset( vertexLuxels[ k ], 0, numBSPDrawVerts * VERTEX_LUXEL_SIZE * sizeof( float ) );
-		radVertexLuxels[ k ] = safe_malloc( numBSPDrawVerts * VERTEX_LUXEL_SIZE * sizeof( float ) );
-		memset( radVertexLuxels[ k ], 0, numBSPDrawVerts * VERTEX_LUXEL_SIZE * sizeof( float ) );
+		vertexLuxels[ k ] = safe_calloc( numBSPDrawVerts * VERTEX_LUXEL_SIZE * sizeof( float ) );
+		radVertexLuxels[ k ] = safe_calloc( numBSPDrawVerts * VERTEX_LUXEL_SIZE * sizeof( float ) );
 	}
 
 	/* emit some stats */
@@ -1419,7 +1408,7 @@ void StitchSurfaceLightmaps( void ){
 #define LUXEL_TOLERANCE     0.0025
 #define LUXEL_COLOR_FRAC    0.001302083 /* 1 / 3 / 256 */
 
-static qboolean CompareBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, int bNum ){
+static bool CompareBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, int bNum ){
 	rawLightmap_t   *lm;
 	int x, y;
 	double delta, total, rd, gd, bd;
@@ -1429,7 +1418,7 @@ static qboolean CompareBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, 
 	/* styled lightmaps will never be collapsed to non-styled lightmaps when there is _minlight */
 	if ( ( minLight[ 0 ] || minLight[ 1 ] || minLight[ 2 ] ) &&
 		 ( ( aNum == 0 && bNum != 0 ) || ( aNum != 0 && bNum == 0 ) ) ) {
-		return qfalse;
+		return false;
 	}
 
 	/* basic tests */
@@ -1437,7 +1426,7 @@ static qboolean CompareBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, 
 		 a->brightness != b->brightness ||
 		 a->solid[ aNum ] != b->solid[ bNum ] ||
 		 a->bspLuxels[ aNum ] == NULL || b->bspLuxels[ bNum ] == NULL ) {
-		return qfalse;
+		return false;
 	}
 
 	/* compare solid color lightmaps */
@@ -1449,16 +1438,16 @@ static qboolean CompareBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, 
 
 		/* compare color */
 		if ( rd > SOLID_EPSILON || gd > SOLID_EPSILON || bd > SOLID_EPSILON ) {
-			return qfalse;
+			return false;
 		}
 
 		/* okay */
-		return qtrue;
+		return true;
 	}
 
 	/* compare nonsolid lightmaps */
 	if ( a->w != b->w || a->h != b->h ) {
-		return qfalse;
+		return false;
 	}
 
 	/* compare luxels */
@@ -1487,7 +1476,7 @@ static qboolean CompareBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, 
 
 			/* 2003-09-27: compare individual luxels */
 			if ( rd > 3.0 || gd > 3.0 || bd > 3.0 ) {
-				return qfalse;
+				return false;
 			}
 
 			/* compare (fixme: take into account perceptual differences) */
@@ -1497,13 +1486,13 @@ static qboolean CompareBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, 
 
 			/* is the change too high? */
 			if ( total > 0.0 && ( ( delta / total ) > LUXEL_TOLERANCE ) ) {
-				return qfalse;
+				return false;
 			}
 		}
 	}
 
 	/* made it this far, they must be identical (or close enough) */
-	return qtrue;
+	return true;
 }
 
 
@@ -1513,7 +1502,7 @@ static qboolean CompareBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, 
    merges two surface lightmaps' bsp luxels, overwriting occluded luxels
  */
 
-static qboolean MergeBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, int bNum ){
+static bool MergeBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, int bNum ){
 	rawLightmap_t   *lm;
 	int x, y;
 	float luxel[ 3 ], *aLuxel, *bLuxel;
@@ -1524,7 +1513,7 @@ static qboolean MergeBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, in
 		 a->brightness != b->brightness ||
 		 a->solid[ aNum ] != b->solid[ bNum ] ||
 		 a->bspLuxels[ aNum ] == NULL || b->bspLuxels[ bNum ] == NULL ) {
-		return qfalse;
+		return false;
 	}
 
 	/* compare solid lightmaps */
@@ -1538,12 +1527,12 @@ static qboolean MergeBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, in
 		VectorCopy( luxel, b->solidColor[ bNum ] );
 
 		/* return to sender */
-		return qtrue;
+		return true;
 	}
 
 	/* compare nonsolid lightmaps */
 	if ( a->w != b->w || a->h != b->h ) {
-		return qfalse;
+		return false;
 	}
 
 	/* merge luxels */
@@ -1579,7 +1568,7 @@ static qboolean MergeBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, in
 	}
 
 	/* done */
-	return qtrue;
+	return true;
 }
 
 
@@ -1589,7 +1578,7 @@ static qboolean MergeBSPLuxels( rawLightmap_t *a, int aNum, rawLightmap_t *b, in
    determines if a single luxel is can be approximated with the interpolated vertex rgba
  */
 
-static qboolean ApproximateLuxel( rawLightmap_t *lm, bspDrawVert_t *dv ){
+static bool ApproximateLuxel( rawLightmap_t *lm, bspDrawVert_t *dv ){
 	int i, x, y, d, lightmapNum;
 	float   *luxel;
 	vec3_t color, vertexColor;
@@ -1625,7 +1614,7 @@ static qboolean ApproximateLuxel( rawLightmap_t *lm, bspDrawVert_t *dv ){
 
 		/* ignore occluded luxels */
 		if ( luxel[ 0 ] < 0.0f || luxel[ 1 ] < 0.0f || luxel[ 2 ] < 0.0f ) {
-			return qtrue;
+			return true;
 		}
 
 		/* copy, set min color and compare */
@@ -1658,13 +1647,13 @@ static qboolean ApproximateLuxel( rawLightmap_t *lm, bspDrawVert_t *dv ){
 				d *= -1;
 			}
 			if ( d > approximateTolerance ) {
-				return qfalse;
+				return false;
 			}
 		}
 	}
 
 	/* close enough for the girls i date */
-	return qtrue;
+	return true;
 }
 
 
@@ -1674,20 +1663,20 @@ static qboolean ApproximateLuxel( rawLightmap_t *lm, bspDrawVert_t *dv ){
    determines if a single triangle can be approximated with vertex rgba
  */
 
-static qboolean ApproximateTriangle_r( rawLightmap_t *lm, bspDrawVert_t *dv[ 3 ] ){
+static bool ApproximateTriangle_r( rawLightmap_t *lm, bspDrawVert_t *dv[ 3 ] ){
 	bspDrawVert_t mid, *dv2[ 3 ];
 	int max;
 
 
 	/* approximate the vertexes */
-	if ( ApproximateLuxel( lm, dv[ 0 ] ) == qfalse ) {
-		return qfalse;
+	if ( !ApproximateLuxel( lm, dv[ 0 ] ) ) {
+		return false;
 	}
-	if ( ApproximateLuxel( lm, dv[ 1 ] ) == qfalse ) {
-		return qfalse;
+	if ( !ApproximateLuxel( lm, dv[ 1 ] ) ) {
+		return false;
 	}
-	if ( ApproximateLuxel( lm, dv[ 2 ] ) == qfalse ) {
-		return qfalse;
+	if ( !ApproximateLuxel( lm, dv[ 2 ] ) ) {
+		return false;
 	}
 
 	/* subdivide calc */
@@ -1712,21 +1701,21 @@ static qboolean ApproximateTriangle_r( rawLightmap_t *lm, bspDrawVert_t *dv[ 3 ]
 
 		/* try to early out */
 		if ( i < 0 || maxDist < subdivideThreshold ) {
-			return qtrue;
+			return true;
 		}
 	}
 
 	/* split the longest edge and map it */
 	LerpDrawVert( dv[ max ], dv[ ( max + 1 ) % 3 ], &mid );
-	if ( ApproximateLuxel( lm, &mid ) == qfalse ) {
-		return qfalse;
+	if ( !ApproximateLuxel( lm, &mid ) ) {
+		return false;
 	}
 
 	/* recurse to first triangle */
 	VectorCopy( dv, dv2 );
 	dv2[ max ] = &mid;
-	if ( ApproximateTriangle_r( lm, dv2 ) == qfalse ) {
-		return qfalse;
+	if ( !ApproximateTriangle_r( lm, dv2 ) ) {
+		return false;
 	}
 
 	/* recurse to second triangle */
@@ -1742,38 +1731,38 @@ static qboolean ApproximateTriangle_r( rawLightmap_t *lm, bspDrawVert_t *dv[ 3 ]
    determines if a raw lightmap can be approximated sufficiently with vertex colors
  */
 
-static qboolean ApproximateLightmap( rawLightmap_t *lm ){
+static bool ApproximateLightmap( rawLightmap_t *lm ){
 	int n, num, i, x, y, pw[ 5 ], r;
 	bspDrawSurface_t    *ds;
 	surfaceInfo_t       *info;
 	mesh_t src, *subdivided, *mesh;
 	bspDrawVert_t       *verts, *dv[ 3 ];
-	qboolean approximated;
+	bool approximated;
 
 
 	/* approximating? */
 	if ( approximateTolerance <= 0 ) {
-		return qfalse;
+		return false;
 	}
 
 	/* test for jmonroe */
 	#if 0
 	/* don't approx lightmaps with styled twins */
 	if ( lm->numStyledTwins > 0 ) {
-		return qfalse;
+		return false;
 	}
 
 	/* don't approx lightmaps with styles */
 	for ( i = 1; i < MAX_LIGHTMAPS; i++ )
 	{
 		if ( lm->styles[ i ] != LS_NONE ) {
-			return qfalse;
+			return false;
 		}
 	}
 	#endif
 
 	/* assume reduced until shadow detail is found */
-	approximated = qtrue;
+	approximated = true;
 
 	/* walk the list of surfaces on this raw lightmap */
 	for ( n = 0; n < lm->numLightSurfaces; n++ )
@@ -1784,7 +1773,7 @@ static qboolean ApproximateLightmap( rawLightmap_t *lm ){
 		info = &surfaceInfos[ num ];
 
 		/* assume not-reduced initially */
-		info->approximated = qfalse;
+		info->approximated = false;
 
 		/* bail if lightmap doesn't match up */
 		if ( info->lm != lm ) {
@@ -1800,7 +1789,7 @@ static qboolean ApproximateLightmap( rawLightmap_t *lm ){
 		if ( ( info->maxs[ 0 ] - info->mins[ 0 ] ) <= ( 2.0f * info->sampleSize ) &&
 			 ( info->maxs[ 1 ] - info->mins[ 1 ] ) <= ( 2.0f * info->sampleSize ) &&
 			 ( info->maxs[ 2 ] - info->mins[ 2 ] ) <= ( 2.0f * info->sampleSize ) ) {
-			info->approximated = qtrue;
+			info->approximated = true;
 			numSurfsVertexForced++;
 			continue;
 		}
@@ -1813,7 +1802,7 @@ static qboolean ApproximateLightmap( rawLightmap_t *lm ){
 			verts = yDrawVerts + ds->firstVert;
 
 			/* map the triangles */
-			info->approximated = qtrue;
+			info->approximated = true;
 			for ( i = 0; i < ds->numIndexes && info->approximated; i += 3 )
 			{
 				dv[ 0 ] = &verts[ bspDrawIndexes[ ds->firstIndex + i ] ];
@@ -1840,7 +1829,7 @@ static qboolean ApproximateLightmap( rawLightmap_t *lm ){
 			verts = mesh->verts;
 
 			/* map the mesh quads */
-			info->approximated = qtrue;
+			info->approximated = true;
 			for ( y = 0; y < ( mesh->height - 1 ) && info->approximated; y++ )
 			{
 				for ( x = 0; x < ( mesh->width - 1 ) && info->approximated; x++ )
@@ -1880,8 +1869,8 @@ static qboolean ApproximateLightmap( rawLightmap_t *lm ){
 		}
 
 		/* reduced? */
-		if ( info->approximated == qfalse ) {
-			approximated = qfalse;
+		if ( !info->approximated ) {
+			approximated = false;
 		}
 		else{
 			numSurfsVertexApproximated++;
@@ -1899,23 +1888,23 @@ static qboolean ApproximateLightmap( rawLightmap_t *lm ){
    tests a stamp on a given lightmap for validity
  */
 
-static qboolean TestOutLightmapStamp( rawLightmap_t *lm, int lightmapNum, outLightmap_t *olm, int x, int y ){
+static bool TestOutLightmapStamp( rawLightmap_t *lm, int lightmapNum, outLightmap_t *olm, int x, int y ){
 	int sx, sy, ox, oy, offset;
 	float       *luxel;
 
 
 	/* bounds check */
 	if ( x < 0 || y < 0 || ( x + lm->w ) > olm->customWidth || ( y + lm->h ) > olm->customHeight ) {
-		return qfalse;
+		return false;
 	}
 
 	/* solid lightmaps test a 1x1 stamp */
 	if ( lm->solid[ lightmapNum ] ) {
 		offset = ( y * olm->customWidth ) + x;
 		if ( olm->lightBits[ offset >> 3 ] & ( 1 << ( offset & 7 ) ) ) {
-			return qfalse;
+			return false;
 		}
-		return qtrue;
+		return true;
 	}
 
 	/* test the stamp */
@@ -1934,13 +1923,13 @@ static qboolean TestOutLightmapStamp( rawLightmap_t *lm, int lightmapNum, outLig
 			oy = y + sy;
 			offset = ( oy * olm->customWidth ) + ox;
 			if ( olm->lightBits[ offset >> 3 ] & ( 1 << ( offset & 7 ) ) ) {
-				return qfalse;
+				return false;
 			}
 		}
 	}
 
 	/* stamp is empty */
-	return qtrue;
+	return true;
 }
 
 
@@ -1981,13 +1970,10 @@ static void SetupOutLightmap( rawLightmap_t *lm, outLightmap_t *olm ){
 	olm->numShaders = 0;
 
 	/* allocate buffers */
-	olm->lightBits = safe_malloc( ( olm->customWidth * olm->customHeight / 8 ) + 8 );
-	memset( olm->lightBits, 0, ( olm->customWidth * olm->customHeight / 8 ) + 8 );
-	olm->bspLightBytes = safe_malloc( olm->customWidth * olm->customHeight * 3 );
-	memset( olm->bspLightBytes, 0, olm->customWidth * olm->customHeight * 3 );
+	olm->lightBits = safe_calloc( ( olm->customWidth * olm->customHeight / 8 ) + 8 );
+	olm->bspLightBytes = safe_calloc( olm->customWidth * olm->customHeight * 3 );
 	if ( deluxemap ) {
-		olm->bspDirBytes = safe_malloc( olm->customWidth * olm->customHeight * 3 );
-		memset( olm->bspDirBytes, 0, olm->customWidth * olm->customHeight * 3 );
+		olm->bspDirBytes = safe_calloc( olm->customWidth * olm->customHeight * 3 );
 	}
 }
 
@@ -1999,14 +1985,14 @@ static void SetupOutLightmap( rawLightmap_t *lm, outLightmap_t *olm ){
  */
 
 #define LIGHTMAP_RESERVE_COUNT 1
-static void FindOutLightmaps( rawLightmap_t *lm, qboolean fastAllocate ){
+static void FindOutLightmaps( rawLightmap_t *lm, bool fastAllocate ){
 	int i, j, k, lightmapNum, xMax, yMax, x = -1, y = -1, sx, sy, ox, oy, offset;
 	outLightmap_t       *olm;
 	surfaceInfo_t       *info;
 	float               *luxel, *deluxel;
 	vec3_t color, direction;
 	byte                *pixel;
-	qboolean ok;
+	bool ok;
 	int xIncrement, yIncrement;
 
 
@@ -2033,7 +2019,7 @@ static void FindOutLightmaps( rawLightmap_t *lm, qboolean fastAllocate ){
 		}
 
 		/* if this is a styled lightmap, try some normalized locations first */
-		ok = qfalse;
+		ok = false;
 		if ( lightmapNum > 0 && outLightmaps != NULL ) {
 			/* loop twice */
 			for ( j = 0; j < 2; j++ )
@@ -2096,7 +2082,7 @@ static void FindOutLightmaps( rawLightmap_t *lm, qboolean fastAllocate ){
 		}
 
 		/* try normal placement algorithm */
-		if ( ok == qfalse ) {
+		if ( !ok ) {
 			/* reset origin */
 			x = 0;
 			y = 0;
@@ -2119,7 +2105,7 @@ static void FindOutLightmaps( rawLightmap_t *lm, qboolean fastAllocate ){
 				}
 
 				/* if fast allocation, skip lightmap files that are more than 90% complete */
-				if ( fastAllocate == qtrue ) {
+				if ( fastAllocate ) {
 					if (olm->freeLuxels < (olm->customWidth * olm->customHeight) / 10) {
 						continue;
 					}
@@ -2143,7 +2129,7 @@ static void FindOutLightmaps( rawLightmap_t *lm, qboolean fastAllocate ){
 				}
 
 				/* if fast allocation, do not test allocation on every pixels, especially for large lightmaps */
-				if ( fastAllocate == qtrue ) {
+				if ( fastAllocate ) {
 					xIncrement = MAX(1, lm->w / 15);
 					yIncrement = MAX(1, lm->h / 15);
 				}
@@ -2181,13 +2167,10 @@ static void FindOutLightmaps( rawLightmap_t *lm, qboolean fastAllocate ){
 		}
 
 		/* no match? */
-		if ( ok == qfalse ) {
+		if ( !ok ) {
 			/* allocate LIGHTMAP_RESERVE_COUNT new output lightmaps */
 			numOutLightmaps += LIGHTMAP_RESERVE_COUNT;
-			olm = safe_malloc( numOutLightmaps * sizeof( outLightmap_t ) );
-			if ( !olm ){
-				Error( "FindOutLightmaps: Failed to allocate memory.\n" );
-			}
+			olm = safe_malloc_info( numOutLightmaps * sizeof( outLightmap_t ), "FindOutLightmaps" );
 
 			if ( outLightmaps != NULL && numOutLightmaps > LIGHTMAP_RESERVE_COUNT ) {
 				memcpy( olm, outLightmaps, ( numOutLightmaps - LIGHTMAP_RESERVE_COUNT ) * sizeof( outLightmap_t ) );
@@ -2496,7 +2479,7 @@ void FillOutLightmap( outLightmap_t *olm ){
    stores the surface lightmaps into the bsp as byte rgb triplets
  */
 
-void StoreSurfaceLightmaps( qboolean fastAllocate ){
+void StoreSurfaceLightmaps( bool fastAllocate ){
 	int i, j, k, x, y, lx, ly, sx, sy, *cluster, mappedSamples, timer_start;
 	int style, size, lightmapNum, lightmapNum2;
 	float               *normal, *luxel, *bspLuxel, *bspLuxel2, *radLuxel, samples, occludedSamples;
@@ -2514,8 +2497,8 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 	char dirname[ 1024 ], filename[ 1024 ];
 	shaderInfo_t        *csi;
 	char lightmapName[ 128 ];
-	const char              *rgbGenValues[ 256 ];
-	const char              *alphaGenValues[ 256 ];
+	const char              *rgbGenValues[ 256 ] = {0};
+	const char              *alphaGenValues[ 256 ] = {0};
 
 
 	/* note it */
@@ -2530,8 +2513,6 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 		strcpy( dirname, source );
 		StripExtension( dirname );
 	}
-	memset( rgbGenValues, 0, sizeof( rgbGenValues ) );
-	memset( alphaGenValues, 0, sizeof( alphaGenValues ) );
 
 	/* -----------------------------------------------------------------
 	   average the sampled luxels into the bsp luxels
@@ -2563,8 +2544,7 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 			/* allocate bsp luxel storage */
 			if ( lm->bspLuxels[ lightmapNum ] == NULL ) {
 				size = lm->w * lm->h * BSP_LUXEL_SIZE * sizeof( float );
-				lm->bspLuxels[ lightmapNum ] = safe_malloc( size );
-				memset( lm->bspLuxels[ lightmapNum ], 0, size );
+				lm->bspLuxels[ lightmapNum ] = safe_calloc( size );
 			}
 
 			/* allocate radiosity lightmap storage */
@@ -2810,19 +2790,19 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 			}
 
 			/* set solid color */
-			lm->solid[ lightmapNum ] = qfalse;
+			lm->solid[ lightmapNum ] = false;
 			VectorAdd( colorMins, colorMaxs, lm->solidColor[ lightmapNum ] );
 			VectorScale( lm->solidColor[ lightmapNum ], 0.5f, lm->solidColor[ lightmapNum ] );
 
 			/* nocollapse prevents solid lightmaps */
-			if ( noCollapse == qfalse ) {
+			if ( !noCollapse ) {
 				/* check solid color */
 				VectorSubtract( colorMaxs, colorMins, sample );
 				if ( ( sample[ 0 ] <= SOLID_EPSILON && sample[ 1 ] <= SOLID_EPSILON && sample[ 2 ] <= SOLID_EPSILON ) ||
 					 ( lm->w <= 2 && lm->h <= 2 ) ) { /* small lightmaps get forced to solid color */
 					/* set to solid */
 					VectorCopy( colorMins, lm->solidColor[ lightmapNum ] );
-					lm->solid[ lightmapNum ] = qtrue;
+					lm->solid[ lightmapNum ] = true;
 					numSolidLightmaps++;
 				}
 
@@ -2833,7 +2813,7 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 						if ( lm->solid[ y ] ) {
 							numSolidLightmaps--;
 						}
-						lm->solid[ y ] = qfalse;
+						lm->solid[ y ] = false;
 					}
 				}
 			}
@@ -3012,7 +2992,7 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 	   collapse non-unique lightmaps
 	   ----------------------------------------------------------------- */
 
-	if ( noCollapse == qfalse && deluxemap == qfalse ) {
+	if ( !noCollapse && !deluxemap ) {
 		/* note it */
 		Sys_Printf( "collapsing..." );
 
@@ -3170,9 +3150,7 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 	timer_start = I_FloatTime();
 
 	/* count the bsp lightmaps and allocate space */
-	if ( bspLightBytes != NULL ) {
-		free( bspLightBytes );
-	}
+	free( bspLightBytes );
 	if ( numBSPLightmaps == 0 || externalLightmaps ) {
 		numBSPLightBytes = 0;
 		bspLightBytes = NULL;
@@ -3180,8 +3158,7 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 	else
 	{
 		numBSPLightBytes = ( numBSPLightmaps * game->lightmapSize * game->lightmapSize * 3 );
-		bspLightBytes = safe_malloc( numBSPLightBytes );
-		memset( bspLightBytes, 0, numBSPLightBytes );
+		bspLightBytes = safe_calloc( numBSPLightBytes );
 	}
 
 	/* walk the list of output lightmaps */
@@ -3193,6 +3170,13 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 		/* fill output lightmap */
 		if ( lightmapFill ) {
 			FillOutLightmap( olm );
+		}
+		else if( lightmapPink ){
+			for ( x = 0; x < olm->customHeight * olm->customWidth; ++x ){
+				if ( ( olm->lightBits[x >> 3] & ( 1 << ( x & 7 ) ) ) == 0 ) { /* not filled */
+					VectorSet( olm->bspLightBytes + x * 3, 255, 0, 255 );
+				}
+			}
 		}
 
 		/* is this a valid bsp lightmap? */
@@ -3219,14 +3203,14 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 			/* write lightmap */
 			sprintf( filename, "%s/" EXTERNAL_LIGHTMAP, dirname, numExtLightmaps );
 			Sys_FPrintf( SYS_VRB, "\nwriting %s", filename );
-			WriteTGA24( filename, olm->bspLightBytes, olm->customWidth, olm->customHeight, qtrue );
+			WriteTGA24( filename, olm->bspLightBytes, olm->customWidth, olm->customHeight, true );
 			numExtLightmaps++;
 
 			/* write deluxemap */
 			if ( deluxemap ) {
 				sprintf( filename, "%s/" EXTERNAL_LIGHTMAP, dirname, numExtLightmaps );
 				Sys_FPrintf( SYS_VRB, "\nwriting %s", filename );
-				WriteTGA24( filename, olm->bspDirBytes, olm->customWidth, olm->customHeight, qtrue );
+				WriteTGA24( filename, olm->bspDirBytes, olm->customWidth, olm->customHeight, true );
 				numExtLightmaps++;
 
 				if ( debugDeluxemap ) {
@@ -3393,7 +3377,6 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 
 		/* surfaces with styled lightmaps and a style marker get a custom generated shader (fixme: make this work with external lightmaps) */
 		if ( olm != NULL && lm != NULL && lm->styles[ 1 ] != LS_NONE && game->load != LoadRBSPFile ) { //%	info->si->styleMarker > 0 )
-			qboolean dfEqual;
 			char key[ 32 ], styleStage[ 512 ], styleStages[ 4096 ], rgbGen[ 128 ], alphaGen[ 128 ];
 
 
@@ -3402,12 +3385,7 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 			dv = &bspDrawVerts[ ds->firstVert ];
 
 			/* depthFunc equal? */
-			if ( info->si->styleMarker == 2 || info->si->implicitMap == IM_MASKED ) {
-				dfEqual = qtrue;
-			}
-			else{
-				dfEqual = qfalse;
-			}
+			const bool dfEqual = ( info->si->styleMarker == 2 || info->si->implicitMap == IM_MASKED );
 
 			/* generate stages for styled lightmaps */
 			for ( lightmapNum = 1; lightmapNum < MAX_LIGHTMAPS; lightmapNum++ )
@@ -3433,16 +3411,16 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 				if ( rgbGenValues[ style ] == NULL ) {
 					sprintf( key, "_style%drgbgen", style );
 					rgbGenValues[ style ] = ValueForKey( &entities[ 0 ], key );
-					if ( rgbGenValues[ style ][ 0 ] == '\0' ) {
+					if ( strEmpty( rgbGenValues[ style ] ) ) {
 						rgbGenValues[ style ] = "wave noise 0.5 1 0 5.37";
 					}
 				}
-				rgbGen[ 0 ] = '\0';
-				if ( rgbGenValues[ style ][ 0 ] != '\0' ) {
+				strClear( rgbGen );
+				if ( !strEmpty( rgbGenValues[ style ] ) ) {
 					sprintf( rgbGen, "\t\trgbGen %s // style %d\n", rgbGenValues[ style ], style );
 				}
 				else{
-					rgbGen[ 0 ] = '\0';
+					strClear( rgbGen );
 				}
 
 				/* get alphagen string */
@@ -3450,11 +3428,11 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 					sprintf( key, "_style%dalphagen", style );
 					alphaGenValues[ style ] = ValueForKey( &entities[ 0 ], key );
 				}
-				if ( alphaGenValues[ style ][ 0 ] != '\0' ) {
+				if ( !strEmpty( alphaGenValues[ style ] ) ) {
 					sprintf( alphaGen, "\t\talphaGen %s // style %d\n", alphaGenValues[ style ], style );
 				}
 				else{
-					alphaGen[ 0 ] = '\0';
+					strClear( alphaGen );
 				}
 
 				/* calculate st offset */
@@ -3525,7 +3503,7 @@ void StoreSurfaceLightmaps( qboolean fastAllocate ){
 			olm = &outLightmaps[ lm->outLightmapNums[ 0 ] ];
 
 			/* do some name mangling */
-			sprintf( lightmapName, "maps/%s/" EXTERNAL_LIGHTMAP, mapName, olm->extLightmapNum );
+			sprintf( lightmapName, "maps/%s/" EXTERNAL_LIGHTMAP "\n\t\ttcgen lightmap", mapName, olm->extLightmapNum );
 
 			/* create custom shader */
 			csi = CustomShader( info->si, "$lightmap", lightmapName );

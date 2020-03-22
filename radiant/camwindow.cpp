@@ -138,12 +138,13 @@ struct MotionDeltaValues {
 
 enum camera_draw_mode
 {
-	cd_wire,
-	cd_solid,
-	cd_texture,
-	cd_texture_plus_wire,
-	cd_lighting
+	cd_wire = 0,
+	cd_solid = 1,
+	cd_texture = 2,
+	cd_texture_plus_wire = 3,
+	cd_lighting = 4
 };
+const int camera_draw_mode_count = 5;
 
 struct camera_t
 {
@@ -210,13 +211,18 @@ struct camera_t
 	}
 };
 
-float camera_t::fieldOfView = 110.0f;
+float camera_t::fieldOfView = 100.0f;
 const float camera_t::near_z = 1.f;
 camera_draw_mode camera_t::draw_mode = cd_texture;
 
 inline Matrix4 projection_for_camera( float near_z, float far_z, float fieldOfView, int width, int height ){
-	const float half_width = static_cast<float>( near_z * tan( degrees_to_radians( fieldOfView * 0.5 ) ) );
-	const float half_height = half_width * ( static_cast<float>( height ) / static_cast<float>( width ) );
+	float half_width = static_cast<float>( near_z * tan( degrees_to_radians( fieldOfView * 0.5 ) ) );
+	const bool swap = height > width;
+	if( swap )
+		std::swap( width, height );
+	float half_height = half_width * ( static_cast<float>( height ) / static_cast<float>( width ) );
+	if( swap )
+		std::swap( half_width, half_height );
 
 	return matrix4_frustum(
 			   -half_width,
@@ -745,7 +751,6 @@ void Camera_motionDelta( int x, int y, unsigned int state, void* data ){
 
 #include "stream/stringstream.h"
 
-#define cam_draw_size_use_tex
 class CamDrawSize
 {
 	Vector3 _extents;
@@ -901,6 +906,7 @@ void render( RenderStateFlags state ) const {
 			glPolygonOffset( 1, -1 );
 			glColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( Colour4b ), colorarr1.data() );
 			glDrawArrays( GL_QUADS, start0? 2 : 0, GLsizei( count - ( start0? 2 : 4 ) ) );
+			glPolygonOffset( -1, 1 ); // restore default
 		}
 	}
 
@@ -1069,9 +1075,12 @@ GtkWindow* CamWnd_getParent( CamWnd& camwnd ){
 
 ToggleShown g_camera_shown( true );
 
+void CamWnd_Shown_Construct( GtkWindow* parent ){
+	g_camera_shown.connect( GTK_WIDGET( parent ) );
+}
+
 void CamWnd_setParent( CamWnd& camwnd, GtkWindow* parent ){
 	camwnd.m_parent = parent;
-	g_camera_shown.connect( GTK_WIDGET( camwnd.m_parent ) );
 }
 
 void CamWnd_Update( CamWnd& camwnd ){
@@ -1219,15 +1228,16 @@ void camwnd_update_xor_rectangle( CamWnd& self, rect_t area ){
 			if ( Map_Valid( g_map ) && ScreenUpdates_Enabled() ) {
 				GlobalOpenGL_debugAssertNoErrors();
 
-				glDrawBuffer( GL_FRONT );
+//				glDrawBuffer( GL_FRONT );
 				self.fbo_get()->blit();
 
 				self.m_XORRectangle.set( area, self.getCamera().width, self.getCamera().height );
 
-				glDrawBuffer( GL_BACK );
+//				glDrawBuffer( GL_BACK );
 
 				GlobalOpenGL_debugAssertNoErrors();
-				glwidget_make_current( self.m_gl_widget );
+//				glwidget_make_current( self.m_gl_widget );
+				glwidget_swap_buffers( self.m_gl_widget );
 			}
 		}
 	}
@@ -2324,6 +2334,9 @@ void CamWnd_registerShortcuts(){
 		command_connect_accelerator( "TogglePreview" );
 	}
 
+	command_connect_accelerator( "CameraModeNext" );
+	command_connect_accelerator( "CameraModePrev" );
+
 	command_connect_accelerator( "CameraSpeedInc" );
 	command_connect_accelerator( "CameraSpeedDec" );
 }
@@ -2404,50 +2417,23 @@ void GlobalCamera_LookThroughCamera(){
 
 
 void RenderModeImport( int value ){
-	switch ( value )
-	{
-	case 0:
-		CamWnd_SetMode( cd_wire );
-		break;
-	case 1:
-		CamWnd_SetMode( cd_solid );
-		break;
-	case 2:
-		CamWnd_SetMode( cd_texture );
-		break;
-	case 3:
-		CamWnd_SetMode( cd_texture_plus_wire );
-		break;
-	case 4:
-		CamWnd_SetMode( cd_lighting );
-		break;
-	default:
-		CamWnd_SetMode( cd_texture );
-	}
+	CamWnd_SetMode( static_cast<camera_draw_mode>( ( value < 0 || value >= camera_draw_mode_count)? 2 : value ) );
 }
 typedef FreeCaller1<int, RenderModeImport> RenderModeImportCaller;
 
 void RenderModeExport( const IntImportCallback& importer ){
-	switch ( CamWnd_GetMode() )
-	{
-	case cd_wire:
-		importer( 0 );
-		break;
-	case cd_solid:
-		importer( 1 );
-		break;
-	case cd_texture:
-		importer( 2 );
-		break;
-	case cd_texture_plus_wire:
-		importer( 3 );
-		break;
-	case cd_lighting:
-		importer( 4 );
-		break;
-	}
+	importer( CamWnd_GetMode() );
 }
 typedef FreeCaller1<const IntImportCallback&, RenderModeExport> RenderModeExportCaller;
+
+void CameraModeNext(){
+	const int count = camera_draw_mode_count - ( g_pGameDescription->mGameType == "doom3"? 0 : 1 );
+	CamWnd_SetMode( static_cast<camera_draw_mode>( ( CamWnd_GetMode() + 1 ) % count ) );
+}
+void CameraModePrev(){
+	const int count = camera_draw_mode_count - ( g_pGameDescription->mGameType == "doom3"? 0 : 1 );
+	CamWnd_SetMode( static_cast<camera_draw_mode>( ( CamWnd_GetMode() + count - 1 ) % count ) );
+}
 
 void CamMSAAImport( int value ){
 	g_camwindow_globals_private.m_MSAA = value ? 1 << value : value;
@@ -2508,27 +2494,13 @@ void Camera_constructPreferences( PreferencesPage& page ){
 		BoolExportCaller( g_camwindow_globals_private.m_bFaceWire )
 		);
 
-	if ( g_pGameDescription->mGameType == "doom3" ) {
-		const char* render_mode[] = { "Wireframe", "Flatshade", "Textured", "Textured+Wire", "Lighting" };
-
-		page.appendCombo(
-			"Render Mode",
-			STRING_ARRAY_RANGE( render_mode ),
-			IntImportCallback( RenderModeImportCaller() ),
-			IntExportCallback( RenderModeExportCaller() )
-			);
-	}
-	else
-	{
-		const char* render_mode[] = { "Wireframe", "Flatshade", "Textured", "Textured+Wire" };
-
-		page.appendCombo(
-			"Render Mode",
-			STRING_ARRAY_RANGE( render_mode ),
-			IntImportCallback( RenderModeImportCaller() ),
-			IntExportCallback( RenderModeExportCaller() )
-			);
-	}
+	const char* render_modes[]{ "Wireframe", "Flatshade", "Textured", "Textured+Wire", "Lighting" };
+	page.appendCombo(
+		"Render Mode",
+		StringArrayRange( render_modes, render_modes + ARRAY_SIZE( render_modes ) - ( g_pGameDescription->mGameType == "doom3"? 0 : 1 ) ),
+		IntImportCallback( RenderModeImportCaller() ),
+		IntExportCallback( RenderModeExportCaller() )
+		);
 
 	if( GlobalOpenGL().support_ARB_framebuffer_object ){
 		const char* samples[] = { "0", "2", "4", "8", "16", "32" };
@@ -2599,6 +2571,9 @@ void CamWnd_Construct(){
 	if ( g_pGameDescription->mGameType == "doom3" ) {
 		GlobalCommands_insert( "TogglePreview", FreeCaller<CamWnd_TogglePreview>(), Accelerator( GDK_F3 ) );
 	}
+
+	GlobalCommands_insert( "CameraModeNext", FreeCaller<CameraModeNext>(), Accelerator( '}', (GdkModifierType)GDK_SHIFT_MASK ) );
+	GlobalCommands_insert( "CameraModePrev", FreeCaller<CameraModePrev>(), Accelerator( '{', (GdkModifierType)GDK_SHIFT_MASK ) );
 
 	GlobalCommands_insert( "CameraSpeedInc", FreeCaller<CameraSpeed_increase>(), Accelerator( GDK_KP_Add, (GdkModifierType)GDK_SHIFT_MASK ) );
 	GlobalCommands_insert( "CameraSpeedDec", FreeCaller<CameraSpeed_decrease>(), Accelerator( GDK_KP_Subtract, (GdkModifierType)GDK_SHIFT_MASK ) );

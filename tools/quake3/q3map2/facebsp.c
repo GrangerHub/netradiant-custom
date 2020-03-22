@@ -47,12 +47,7 @@ int c_faceLeafs;
    ================
  */
 face_t  *AllocBspFace( void ) {
-	face_t  *f;
-
-	f = safe_malloc( sizeof( *f ) );
-	memset( f, 0, sizeof( *f ) );
-
-	return f;
+	return safe_calloc( sizeof( face_t ) );
 }
 
 
@@ -123,7 +118,7 @@ static void SelectSplitPlaneNum( node_t *node, face_t *list, int *splitPlaneNum,
 
 	// div0: this check causes detail/structural mixes
 	//for( split = list; split; split = split->next )
-	//	split->checked = qfalse;
+	//	split->checked = false;
 
 	for ( split = list; split; split = split->next )
 	{
@@ -138,7 +133,7 @@ static void SelectSplitPlaneNum( node_t *node, face_t *list, int *splitPlaneNum,
 		for ( check = list ; check ; check = check->next ) {
 			if ( check->planenum == split->planenum ) {
 				facing++;
-				//check->checked = qtrue;	// won't need to test this plane again
+				//check->checked = true;	// won't need to test this plane again
 				continue;
 			}
 			side = WindingOnPlaneSide( check->w, plane->normal, plane->dist );
@@ -249,7 +244,7 @@ void BuildFaceTree_r( node_t *node, face_t *list ){
 	int i;
 	int splitPlaneNum, compileFlags;
 #if 0
-	qboolean isstruct = qfalse;
+	bool isstruct = false;
 #endif
 
 
@@ -262,7 +257,7 @@ void BuildFaceTree_r( node_t *node, face_t *list ){
 	/* if we don't have any more faces, this is a node */
 	if ( splitPlaneNum == -1 ) {
 		node->planenum = PLANENUM_LEAF;
-		node->has_structural_children = qfalse;
+		node->has_structural_children = false;
 		c_faceLeafs++;
 		return;
 	}
@@ -288,7 +283,7 @@ void BuildFaceTree_r( node_t *node, face_t *list ){
 
 #if 0
 		if ( !( split->compileFlags & C_DETAIL ) ) {
-			isstruct = 1;
+			isstruct = true;
 		}
 #endif
 

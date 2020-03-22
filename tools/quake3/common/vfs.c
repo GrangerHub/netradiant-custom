@@ -77,29 +77,6 @@ char g_strLoadedFileLocation[1024];
 // =============================================================================
 // Static functions
 
-static void vfsAddSlash( char *str ){
-	int n = strlen( str );
-	if ( n > 0 ) {
-		if ( str[n - 1] != '\\' && str[n - 1] != '/' ) {
-			strcat( str, "/" );
-		}
-	}
-}
-
-static void vfsFixDOSName( char *src ){
-	if ( src == NULL ) {
-		return;
-	}
-
-	while ( *src )
-	{
-		if ( *src == '\\' ) {
-			*src = '/';
-		}
-		src++;
-	}
-}
-
 //!\todo Define globally or use heap-allocated string.
 #define NAME_MAX 255
 
@@ -128,17 +105,16 @@ static void vfsInitPakFile( const char *filename ){
 	{
 		char filename_inzip[NAME_MAX];
 		unz_file_info file_info;
-		VFS_PAKFILE* file;
 
 		err = unzGetCurrentFileInfo( uf, &file_info, filename_inzip, sizeof( filename_inzip ), NULL, 0, NULL, 0 );
 		if ( err != UNZ_OK ) {
 			break;
 		}
 
-		file = (VFS_PAKFILE*)safe_malloc( sizeof( VFS_PAKFILE ) );
+		VFS_PAKFILE* file = safe_malloc( sizeof( VFS_PAKFILE ) );
 		g_pakFiles = g_slist_append( g_pakFiles, file );
 
-		vfsFixDOSName( filename_inzip );
+		FixDOSName( filename_inzip );
 		g_strdown( filename_inzip );
 
 		file->name = strdup( filename_inzip );
@@ -162,26 +138,19 @@ static void vfsInitPakFile( const char *filename ){
 // reads all pak files from a dir
 void vfsInitDirectory( const char *path ){
 	char filename[PATH_MAX];
-	char *dirlist;
 	GDir *dir;
 	int j;
 
 	for ( j = 0; j < g_numForbiddenDirs; ++j )
 	{
-		char* dbuf = g_strdup( path );
-		if ( *dbuf && dbuf[strlen( dbuf ) - 1] == '/' ) {
-			dbuf[strlen( dbuf ) - 1] = 0;
+		char* dbuf = strdup( path );
+		if ( !strEmpty( dbuf ) && path_separator( dbuf[strlen( dbuf ) - 1] ) ) // del trailing slash
+			strClear( &dbuf[strlen( dbuf ) - 1] );
+		if ( matchpattern( path_get_filename_start( dbuf ), g_strForbiddenDirs[j], TRUE ) ) {
+			free( dbuf );
+			return;
 		}
-		const char *p = strrchr( dbuf, '/' );
-		p = ( p ? ( p + 1 ) : dbuf );
-		if ( matchpattern( p, g_strForbiddenDirs[j], TRUE ) ) {
-			g_free( dbuf );
-			break;
-		}
-		g_free( dbuf );
-	}
-	if ( j < g_numForbiddenDirs ) {
-		return;
+		free( dbuf );
 	}
 
 	if ( g_numDirs == VFS_MAXDIRS ) {
@@ -192,26 +161,20 @@ void vfsInitDirectory( const char *path ){
 
 	strncpy( g_strDirs[g_numDirs], path, PATH_MAX );
 	g_strDirs[g_numDirs][PATH_MAX] = 0;
-	vfsFixDOSName( g_strDirs[g_numDirs] );
-	vfsAddSlash( g_strDirs[g_numDirs] );
+	FixDOSName( g_strDirs[g_numDirs] );
+	path_add_slash( g_strDirs[g_numDirs] );
 	g_numDirs++;
 
 	if ( g_bUsePak ) {
 		dir = g_dir_open( path, 0, NULL );
 
 		if ( dir != NULL ) {
-			while ( 1 )
+			const char* name;
+			while ( ( name = g_dir_read_name( dir ) ) )
 			{
-				const char* name = g_dir_read_name( dir );
-				if ( name == NULL ) {
-					break;
-				}
-
 				for ( j = 0; j < g_numForbiddenDirs; ++j )
 				{
-					const char *p = strrchr( name, '/' );
-					p = ( p ? ( p + 1 ) : name );
-					if ( matchpattern( p, g_strForbiddenDirs[j], TRUE ) ) {
+					if ( matchpattern( path_get_filename_start( name ), g_strForbiddenDirs[j], TRUE ) ) {
 						break;
 					}
 				}
@@ -219,31 +182,21 @@ void vfsInitDirectory( const char *path ){
 					continue;
 				}
 
-				dirlist = g_strdup( name );
+				const char *ext = path_get_filename_base_end( name );
 
-				{
-					char *ext = strrchr( dirlist, '.' );
-
-					if ( ext && !Q_stricmp( ext, ".pk3dir" ) ) {
-						if ( g_numDirs == VFS_MAXDIRS ) {
-							continue;
-						}
-						snprintf( g_strDirs[g_numDirs], PATH_MAX, "%s/%s", path, name );
-						g_strDirs[g_numDirs][PATH_MAX] = '\0';
-						vfsFixDOSName( g_strDirs[g_numDirs] );
-						vfsAddSlash( g_strDirs[g_numDirs] );
-						++g_numDirs;
-					}
-
-					if ( ( ext == NULL ) || ( Q_stricmp( ext, ".pk3" ) != 0 ) ) {
+				if ( striEqual( ext, ".pk3" ) ) {
+					sprintf( filename, "%s/%s", path, name );
+					vfsInitPakFile( filename );
+				}
+				else if ( striEqual( ext, ".pk3dir" ) ) {
+					if ( g_numDirs == VFS_MAXDIRS ) {
 						continue;
 					}
+					snprintf( g_strDirs[g_numDirs], PATH_MAX, "%s/%s", path, name );
+					FixDOSName( g_strDirs[g_numDirs] );
+					path_add_slash( g_strDirs[g_numDirs] );
+					++g_numDirs;
 				}
-
-				sprintf( filename, "%s/%s", path, dirlist );
-				vfsInitPakFile( filename );
-
-				g_free( dirlist );
 			}
 			g_dir_close( dir );
 		}
@@ -252,39 +205,22 @@ void vfsInitDirectory( const char *path ){
 
 
 // lists all .shader files
-void vfsListShaderFiles( char* list, int *num ){
-	//char filename[PATH_MAX];
-	char *dirlist;
+void vfsListShaderFiles( StrList* list, void pushStringCallback( StrList* list, const char* string ) ){
 	GDir *dir;
-	int i, k;
 	char path[NAME_MAX];
 /* search in dirs */
-	for ( i = 0; i < g_numDirs; i++ ){
+	for ( int i = 0; i < g_numDirs; i++ ){
 		snprintf( path, NAME_MAX, "%sscripts/", g_strDirs[ i ] );
 
 		dir = g_dir_open( path, 0, NULL );
 
 		if ( dir != NULL ) {
-			while ( 1 )
+			const char* name;
+			while ( ( name = g_dir_read_name( dir ) ) )
 			{
-				const char* name = g_dir_read_name( dir );
-				if ( name == NULL ) {
-					break;
+				if ( striEqual( path_get_filename_base_end( name ), ".shader" ) ) {
+					pushStringCallback( list, name );
 				}
-				dirlist = g_strdup( name );
-				char *ext = strrchr( dirlist, '.' );
-
-				if ( ( ext == NULL ) || ( Q_stricmp( ext, ".shader" ) != 0 ) ) {
-					continue;
-				}
-
-				for ( k = 0; k < *num; k++ ){
-					if ( !Q_stricmp( list + k*65, dirlist ) ) goto shISdouplicate;
-				}
-				strcpy( list + (*num)*65, dirlist );
-				(*num)++;
-shISdouplicate:
-				g_free( dirlist );
 			}
 			g_dir_close( dir );
 		}
@@ -295,23 +231,9 @@ shISdouplicate:
 	for ( lst = g_pakFiles; lst != NULL; lst = g_slist_next( lst ) )
 	{
 		VFS_PAKFILE* file = (VFS_PAKFILE*)lst->data;
-
-		char *ext = strrchr( file->name, '.' );
-
-		if ( ( ext == NULL ) || ( Q_stricmp( ext, ".shader" ) != 0 ) ) {
-			continue;
+		if ( striEqual( path_get_filename_base_end( file->name ), ".shader" ) ) {
+			pushStringCallback( list, path_get_filename_start( file->name ) );
 		}
-		//name + ext this time
-		ext = strrchr( file->name, '/' );
-		ext++;
-
-		for ( k = 0; k < *num; k++ ){
-			if ( !Q_stricmp( list + k*65, ext ) ) goto shISdouplicate2;
-		}
-		strcpy( list + (*num)*65, ext );
-		(*num)++;
-shISdouplicate2:
-		continue;
 	}
 }
 
@@ -340,14 +262,14 @@ int vfsGetFileCount( const char *filename ){
 	GSList *lst;
 
 	strcpy( fixed, filename );
-	vfsFixDOSName( fixed );
+	FixDOSName( fixed );
 	g_strdown( fixed );
 
 	for ( lst = g_pakFiles; lst != NULL; lst = g_slist_next( lst ) )
 	{
 		VFS_PAKFILE* file = (VFS_PAKFILE*)lst->data;
 
-		if ( strcmp( file->name, fixed ) == 0 ) {
+		if ( strEqual( file->name, fixed ) ) {
 			count++;
 		}
 	}
@@ -373,23 +295,17 @@ int vfsLoadFile( const char *filename, void **bufferptr, int index ){
 	// filename is a full path
 	if ( index == -1 ) {
 		strcpy( g_strLoadedFileLocation, filename );
-		long len;
-		FILE *f;
 
-		f = fopen( filename, "rb" );
+		FILE *f = fopen( filename, "rb" );
 		if ( f == NULL ) {
 			return -1;
 		}
 
 		fseek( f, 0, SEEK_END );
-		len = ftell( f );
+		const long len = ftell( f );
 		rewind( f );
 
 		*bufferptr = safe_malloc( len + 1 );
-		if ( *bufferptr == NULL ) {
-			fclose( f );
-			return -1;
-		}
 
 		if ( fread( *bufferptr, 1, len, f ) != (size_t) len ) {
 			fclose( f );
@@ -405,7 +321,7 @@ int vfsLoadFile( const char *filename, void **bufferptr, int index ){
 
 	*bufferptr = NULL;
 	strcpy( fixed, filename );
-	vfsFixDOSName( fixed );
+	FixDOSName( fixed );
 	g_strdown( fixed );
 
 	for ( i = 0; i < g_numDirs; i++ )
@@ -416,23 +332,16 @@ int vfsLoadFile( const char *filename, void **bufferptr, int index ){
 			if ( count == index ) {
 				strcpy( g_strLoadedFileLocation, tmp );
 
-				long len;
-				FILE *f;
-
-				f = fopen( tmp, "rb" );
+				FILE *f = fopen( tmp, "rb" );
 				if ( f == NULL ) {
 					return -1;
 				}
 
 				fseek( f, 0, SEEK_END );
-				len = ftell( f );
+				const long len = ftell( f );
 				rewind( f );
 
 				*bufferptr = safe_malloc( len + 1 );
-				if ( *bufferptr == NULL ) {
-					fclose( f );
-					return -1;
-				}
 
 				if ( fread( *bufferptr, 1, len, f ) != (size_t) len ) {
 					fclose( f );
@@ -454,14 +363,12 @@ int vfsLoadFile( const char *filename, void **bufferptr, int index ){
 	{
 		VFS_PAKFILE* file = (VFS_PAKFILE*)lst->data;
 
-		if ( strcmp( file->name, fixed ) != 0 ) {
+		if ( !strEqual( file->name, fixed ) ) {
 			continue;
 		}
 
 		if ( count == index ) {
-			strcpy( g_strLoadedFileLocation, file->unzFilePath );
-			strcat( g_strLoadedFileLocation, " :: " );
-			strcat( g_strLoadedFileLocation, filename );
+			snprintf( g_strLoadedFileLocation, sizeof( g_strLoadedFileLocation ), "%s :: %s", file->unzFilePath, filename );
 
 			memcpy( file->zipfile, &file->zipinfo, sizeof( unz_s ) );
 
@@ -492,14 +399,14 @@ int vfsLoadFile( const char *filename, void **bufferptr, int index ){
 
 
 
-qboolean vfsPackFile( const char *filename, const char *packname, const int compLevel ){
+bool vfsPackFile( const char *filename, const char *packname, const int compLevel ){
 	int i;
 	char tmp[NAME_MAX], fixed[NAME_MAX];
 	GSList *lst;
 
 	byte *bufferptr = NULL;
 	strcpy( fixed, filename );
-	vfsFixDOSName( fixed );
+	FixDOSName( fixed );
 	g_strdown( fixed );
 
 	for ( i = 0; i < g_numDirs; i++ )
@@ -535,7 +442,7 @@ qboolean vfsPackFile( const char *filename, const char *packname, const int comp
 				mz_zip_writer_end( &zip );
 			}
 
-			return qtrue;
+			return true;
 		}
 	}
 
@@ -543,24 +450,24 @@ qboolean vfsPackFile( const char *filename, const char *packname, const int comp
 	{
 		VFS_PAKFILE* file = (VFS_PAKFILE*)lst->data;
 
-		if ( strcmp( file->name, fixed ) != 0 ) {
+		if ( !strEqual( file->name, fixed ) ) {
 			continue;
 		}
 
 		memcpy( file->zipfile, &file->zipinfo, sizeof( unz_s ) );
 
 		if ( unzOpenCurrentFile( file->zipfile ) != UNZ_OK ) {
-			return qfalse;
+			return false;
 		}
 
 		bufferptr = safe_malloc( file->size + 1 );
 		// we need to end the buffer with a 0
-		( (char*) ( bufferptr ) )[file->size] = 0;
+		bufferptr[file->size] = 0;
 
 		i = unzReadCurrentFile( file->zipfile, bufferptr, file->size );
 		unzCloseCurrentFile( file->zipfile );
 		if ( i < 0 ) {
-			return qfalse;
+			return false;
 		}
 		else{
 			mz_bool success = MZ_TRUE;
@@ -569,14 +476,14 @@ qboolean vfsPackFile( const char *filename, const char *packname, const int comp
 					Error( "Failed creating zip archive \"%s\"!\n", packname );
 				}
 			free( bufferptr );
-			return qtrue;
+			return true;
 		}
 	}
 
-	return qfalse;
+	return false;
 }
 
-qboolean vfsPackFile_Absolute_Path( const char *filepath, const char *filename, const char *packname, const int compLevel ){
+bool vfsPackFile_Absolute_Path( const char *filepath, const char *filename, const char *packname, const int compLevel ){
 	char tmp[NAME_MAX];
 	strcpy( tmp, filepath );
 	if ( access( tmp, R_OK ) == 0 ) {
@@ -608,8 +515,8 @@ qboolean vfsPackFile_Absolute_Path( const char *filepath, const char *filename, 
 			mz_zip_writer_end( &zip );
 		}
 
-		return qtrue;
+		return true;
 	}
 
-	return qfalse;
+	return false;
 }

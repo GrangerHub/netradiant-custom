@@ -538,6 +538,7 @@ $(INSTALLDIR)/q3map2.$(EXE): \
 	tools/quake3/common/unzip.o \
 	tools/quake3/common/vfs.o \
 	tools/quake3/common/miniz.o \
+	tools/quake3/q3map2/autopk3.o \
 	tools/quake3/q3map2/brush.o \
 	tools/quake3/q3map2/brush_primit.o \
 	tools/quake3/q3map2/bspfile_abstract.o \
@@ -545,6 +546,7 @@ $(INSTALLDIR)/q3map2.$(EXE): \
 	tools/quake3/q3map2/bspfile_rbsp.o \
 	tools/quake3/q3map2/bsp.o \
 	tools/quake3/q3map2/convert_ase.o \
+	tools/quake3/q3map2/convert_bsp.o \
 	tools/quake3/q3map2/convert_obj.o \
 	tools/quake3/q3map2/convert_map.o \
 	tools/quake3/q3map2/decals.o \
@@ -561,6 +563,7 @@ $(INSTALLDIR)/q3map2.$(EXE): \
 	tools/quake3/q3map2/light_ydnar.o \
 	tools/quake3/q3map2/main.o \
 	tools/quake3/q3map2/map.o \
+	tools/quake3/q3map2/minimap.o \
 	tools/quake3/q3map2/mesh.o \
 	tools/quake3/q3map2/model.o \
 	tools/quake3/q3map2/patch.o \
@@ -727,7 +730,6 @@ $(INSTALLDIR)/radiant.$(EXE): \
 	radiant/selection.o \
 	radiant/select.o \
 	radiant/server.o \
-	radiant/shaders.o \
 	radiant/sockets.o \
 	radiant/stacktrace.o \
 	radiant/surfacedialog.o \
@@ -1109,7 +1111,7 @@ $(INSTALLDIR)/heretic2/h2data.$(EXE): \
 	libl_net.$(A) \
 	$(if $(findstring $(OS),Win32),icons/h2data.o,) \
 
-$(INSTALLDIR)/mbspc.$(EXE): CPPFLAGS_EXTRA := -Wstrict-prototypes -DNDEBUG -DBSPC -DBSPCINCLUDE
+$(INSTALLDIR)/mbspc.$(EXE): CPPFLAGS_EXTRA := -Wstrict-prototypes -DNDEBUG -DBSPC -DBSPCINCLUDE -Ilibs
 $(INSTALLDIR)/mbspc.$(EXE): \
 	tools/mbspc/botlib/be_aas_bspq3.o \
 	tools/mbspc/botlib/be_aas_cluster.o \

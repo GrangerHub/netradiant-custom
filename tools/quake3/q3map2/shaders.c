@@ -237,7 +237,7 @@ void TCModRotate( tcMod_t mod, float euler ){
    applies a named surfaceparm to the supplied flags
  */
 
-qboolean ApplySurfaceParm( char *name, int *contentFlags, int *surfaceFlags, int *compileFlags ){
+bool ApplySurfaceParm( char *name, int *contentFlags, int *surfaceFlags, int *compileFlags ){
 	int i, fake;
 	surfaceParm_t   *sp;
 
@@ -261,7 +261,7 @@ qboolean ApplySurfaceParm( char *name, int *contentFlags, int *surfaceFlags, int
 	while ( sp->name != NULL )
 	{
 		/* match? */
-		if ( !Q_stricmp( name, sp->name ) ) {
+		if ( striEqual( name, sp->name ) ) {
 			/* clear and set flags */
 			*contentFlags &= ~( sp->contentFlagsClear );
 			*contentFlags |= sp->contentFlags;
@@ -271,7 +271,7 @@ qboolean ApplySurfaceParm( char *name, int *contentFlags, int *surfaceFlags, int
 			*compileFlags |= sp->compileFlags;
 
 			/* return ok */
-			return qtrue;
+			return true;
 		}
 
 		/* next */
@@ -285,7 +285,7 @@ qboolean ApplySurfaceParm( char *name, int *contentFlags, int *surfaceFlags, int
 		sp = &custSurfaceParms[ i ];
 
 		/* match? */
-		if ( !Q_stricmp( name, sp->name ) ) {
+		if ( striEqual( name, sp->name ) ) {
 			/* clear and set flags */
 			*contentFlags &= ~( sp->contentFlagsClear );
 			*contentFlags |= sp->contentFlags;
@@ -295,12 +295,12 @@ qboolean ApplySurfaceParm( char *name, int *contentFlags, int *surfaceFlags, int
 			*compileFlags |= sp->compileFlags;
 
 			/* return ok */
-			return qtrue;
+			return true;
 		}
 	}
 
 	/* no matching surfaceparm found */
-	return qfalse;
+	return false;
 }
 
 
@@ -311,40 +311,27 @@ qboolean ApplySurfaceParm( char *name, int *contentFlags, int *surfaceFlags, int
  */
 
 void BeginMapShaderFile( const char *mapFile ){
-	char base[ 1024 ];
-	int len;
-
-
 	/* dummy check */
-	mapName[ 0 ] = '\0';
-	mapShaderFile[ 0 ] = '\0';
-	if ( mapFile == NULL || mapFile[ 0 ] == '\0' ) {
+	strClear( mapName );
+	strClear( mapShaderFile );
+	if ( strEmptyOrNull( mapFile ) ) {
 		return;
 	}
-
-	/* copy map name */
-	strcpy( base, mapFile );
-	StripExtension( base );
 
 	/* extract map name */
-	len = strlen( base ) - 1;
-	while ( len > 0 && base[ len ] != '/' && base[ len ] != '\\' )
-		len--;
-	strcpy( mapName, &base[ len + 1 ] );
-	base[ len ] = '\0';
-	if ( len <= 0 ) {
-		return;
-	}
+	ExtractFileBase( mapFile, mapName );
+	char path[ 1024 ];
+	ExtractFilePath( mapFile, path );
 
 	/* append ../scripts/q3map2_<mapname>.shader */
-	sprintf( mapShaderFile, "%s/../%s/q3map2_%s.shader", base, game->shaderPath, mapName );
+	sprintf( mapShaderFile, "%s../%s/q3map2_%s.shader", path, game->shaderPath, mapName );
 	Sys_FPrintf( SYS_VRB, "Map has shader script %s\n", mapShaderFile );
 
 	/* remove it */
 	remove( mapShaderFile );
 
 	/* stop making warnings about missing images */
-	warnImage = qfalse;
+	warnImage = false;
 }
 
 
@@ -361,7 +348,7 @@ void WriteMapShaderFile( void ){
 
 
 	/* dummy check */
-	if ( mapShaderFile[ 0 ] == '\0' ) {
+	if ( strEmpty( mapShaderFile ) ) {
 		return;
 	}
 
@@ -399,7 +386,7 @@ void WriteMapShaderFile( void ){
 	{
 		/* get the shader and print it */
 		si = &shaderInfo[ i ];
-		if ( si->custom == qfalse || si->shaderText == NULL || si->shaderText[ 0 ] == '\0' ) {
+		if ( !si->custom || strEmptyOrNull( si->shaderText ) ) {
 			continue;
 		}
 		num++;
@@ -537,7 +524,7 @@ shaderInfo_t *CustomShader( shaderInfo_t *si, char *find, char *replace ){
 	}
 
 	/* do some bad find-replace */
-	s = strstr( srcShaderText, find );
+	s = strIstr( srcShaderText, find );
 	if ( s == NULL ) {
 		//%	strcpy( shaderText, srcShaderText );
 		return si;  /* testing just using the existing shader if this fails */
@@ -571,11 +558,10 @@ shaderInfo_t *CustomShader( shaderInfo_t *si, char *find, char *replace ){
 	/* clone the existing shader and rename */
 	memcpy( csi, si, sizeof( shaderInfo_t ) );
 	strcpy( csi->shader, shader );
-	csi->custom = qtrue;
+	csi->custom = true;
 
 	/* store new shader text */
-	csi->shaderText = safe_malloc( strlen( shaderText ) + 1 );
-	strcpy( csi->shaderText, shaderText );  /* LEAK! */
+	csi->shaderText = copystring( shaderText );  /* LEAK! */
 
 	/* return it */
 	return csi;
@@ -594,8 +580,7 @@ void EmitVertexRemapShader( char *from, char *to ){
 
 
 	/* dummy check */
-	if ( from == NULL || from[ 0 ] == '\0' ||
-		 to == NULL || to[ 0 ] == '\0' ) {
+	if ( strEmptyOrNull( from ) || strEmptyOrNull( to ) ) {
 		return;
 	}
 
@@ -652,16 +637,17 @@ static shaderInfo_t *AllocShaderInfo( void ){
 
 	si->lightStyle = LS_NORMAL;
 
-	si->polygonOffset = qfalse;
+	si->polygonOffset = false;
 
 	si->shadeAngleDegrees = 0.0f;
 	si->lightmapSampleSize = 0;
 	si->lightmapSampleOffset = DEFAULT_LIGHTMAP_SAMPLE_OFFSET;
-	si->patchShadows = qfalse;
-	si->vertexShadows = qtrue;  /* ydnar: changed default behavior */
-	si->forceSunlight = qfalse;
+	si->patchShadows = false;
+	si->vertexShadows = true;  /* ydnar: changed default behavior */
+	si->forceSunlight = false;
+	si->lmBrightness = lightmapBrightness;
 	si->vertexScale = vertexglobalscale;
-	si->notjunc = qfalse;
+	si->notjunc = false;
 
 	/* ydnar: set texture coordinate transform matrix to identity */
 	TCModIdentity( si->mod );
@@ -699,9 +685,9 @@ void FinishShader( shaderInfo_t *si ){
 	}
 
 	/* legacy terrain has explicit image-sized texture projection */
-	if ( si->legacyTerrain && si->tcGen == qfalse ) {
+	if ( si->legacyTerrain && !si->tcGen ) {
 		/* set xy texture projection */
-		si->tcGen = qtrue;
+		si->tcGen = true;
 		VectorSet( si->vecs[ 0 ], ( 1.0f / ( si->shaderWidth * 0.5f ) ), 0, 0 );
 		VectorSet( si->vecs[ 1 ], 0, ( 1.0f / ( si->shaderHeight * 0.5f ) ), 0 );
 	}
@@ -727,12 +713,13 @@ void FinishShader( shaderInfo_t *si ){
 			}
 		}
 	}
-		if (noob && !(si->compileFlags & C_OB)){
-			ApplySurfaceParm( "noob", &si->contentFlags, &si->surfaceFlags, &si->compileFlags );
-		}
+
+	if( noob && !( si->compileFlags & C_OB ) ){
+		ApplySurfaceParm( "noob", &si->contentFlags, &si->surfaceFlags, &si->compileFlags );
+	}
 
 	/* set to finished */
-	si->finished = qtrue;
+	si->finished = true;
 }
 
 
@@ -775,7 +762,7 @@ static void LoadShaderImages( shaderInfo_t *si ){
 		/* otherwise, use default image */
 		if ( si->shaderImage == NULL ) {
 			si->shaderImage = ImageLoad( DEFAULT_IMAGE );
-			if ( warnImage && strcmp( si->shader, "noshader" ) ) {
+			if ( warnImage && !strEqual( si->shader, "noshader" ) ) {
 				Sys_Warning( "Couldn't find image for shader %s\n", si->shader );
 			}
 		}
@@ -791,9 +778,10 @@ static void LoadShaderImages( shaderInfo_t *si ){
 		}
 	}
 
-	/* if no light image, use shader image */
+	/* if no light image, reuse shader image */
 	if ( si->lightImage == NULL ) {
-		si->lightImage = ImageLoad( si->shaderImage->name );
+		si->lightImage = si->shaderImage;
+		si->lightImage->refCount++;
 	}
 
 	/* create default and average colors */
@@ -830,7 +818,7 @@ static void LoadShaderImages( shaderInfo_t *si ){
 #define MAX_SHADER_DEPRECATION_DEPTH 16
 
 shaderInfo_t *ShaderInfoForShaderNull( const char *shaderName ){
-	if ( !strcmp( shaderName, "noshader" ) ) {
+	if ( strEqual( shaderName, "noshader" ) ) {
 		return NULL;
 	}
 	return ShaderInfoForShader( shaderName );
@@ -843,14 +831,16 @@ shaderInfo_t *ShaderInfoForShader( const char *shaderName ){
 	char shader[ MAX_QPATH ];
 
 	/* dummy check */
-	if ( shaderName == NULL || shaderName[ 0 ] == '\0' ) {
+	if ( strEmptyOrNull( shaderName ) ) {
 		Sys_Warning( "Null or empty shader name\n" );
 		shaderName = "missing";
 	}
 
 	/* strip off extension */
-	strncpy( shader, shaderName, MAX_QPATH - 1 );
-	shader[MAX_QPATH - 1] = '\0';
+	// actual shader name length limit depends on game engine and name use manner (plain texture/custom shader)
+	// so this check may be not enough/too much, depending on the use case
+	if( strcpyQ( shader, shaderName, MAX_QPATH ) >= MAX_QPATH )
+		Error( "Shader name too long: %s", shaderName );
 	StripExtension( shader );
 
 	/* search for it */
@@ -858,7 +848,7 @@ shaderInfo_t *ShaderInfoForShader( const char *shaderName ){
 	for ( i = 0; i < numShaderInfo; i++ )
 	{
 		si = &shaderInfo[ i ];
-		if ( !Q_stricmp( shader, si->shader ) ) {
+		if ( striEqual( shader, si->shader ) ) {
 			/* check if shader is deprecated */
 			if ( deprecationDepth < MAX_SHADER_DEPRECATION_DEPTH && si->deprecateShader && si->deprecateShader[ 0 ] ) {
 				/* override name */
@@ -875,7 +865,7 @@ shaderInfo_t *ShaderInfoForShader( const char *shaderName ){
 			}
 
 			/* load image if necessary */
-			if ( si->finished == qfalse ) {
+			if ( !si->finished ) {
 				LoadShaderImages( si );
 				FinishShader( si );
 			}
@@ -905,14 +895,14 @@ shaderInfo_t *ShaderInfoForShader( const char *shaderName ){
 static int oldScriptLine = 0;
 static int tabDepth = 0;
 
-qboolean GetTokenAppend( char *buffer, qboolean crossline ){
-	qboolean r;
+bool GetTokenAppend( char *buffer, bool crossline ){
+	bool r;
 	int i;
 
 
 	/* get the token */
 	r = GetToken( crossline );
-	if ( r == qfalse || buffer == NULL || token[ 0 ] == '\0' ) {
+	if ( !r || buffer == NULL || strEmpty( token ) ) {
 		return r;
 	}
 
@@ -947,17 +937,17 @@ void Parse1DMatrixAppend( char *buffer, int x, vec_t *m ){
 	int i;
 
 
-	if ( !GetTokenAppend( buffer, qtrue ) || strcmp( token, "(" ) ) {
+	if ( !GetTokenAppend( buffer, true ) || !strEqual( token, "(" ) ) {
 		Error( "Parse1DMatrixAppend(): line %d: ( not found!\nFile location be: %s\n", scriptline, g_strLoadedFileLocation );
 	}
 	for ( i = 0; i < x; i++ )
 	{
-		if ( !GetTokenAppend( buffer, qfalse ) ) {
+		if ( !GetTokenAppend( buffer, false ) ) {
 			Error( "Parse1DMatrixAppend(): line %d: Number not found!\nFile location be: %s\n", scriptline, g_strLoadedFileLocation );
 		}
 		m[ i ] = atof( token );
 	}
-	if ( !GetTokenAppend( buffer, qtrue ) || strcmp( token, ")" ) ) {
+	if ( !GetTokenAppend( buffer, true ) || !strEqual( token, ")" ) ) {
 		Error( "Parse1DMatrixAppend(): line %d: ) not found!\nFile location be: %s\n", scriptline, g_strLoadedFileLocation );
 	}
 }
@@ -979,7 +969,7 @@ static void ParseShaderFile( const char *filename ){
 
 	/* init */
 	si = NULL;
-	shaderText[ 0 ] = '\0';
+	strClear( shaderText );
 
 	/* load the shader */
 	LoadScriptFile( filename, 0 );
@@ -988,19 +978,18 @@ static void ParseShaderFile( const char *filename ){
 	while ( 1 )
 	{
 		/* copy shader text to the shaderinfo */
-		if ( si != NULL && shaderText[ 0 ] != '\0' ) {
+		if ( si != NULL && !strEmpty( shaderText ) ) {
 			strcat( shaderText, "\n" );
-			si->shaderText = safe_malloc( strlen( shaderText ) + 1 );
-			strcpy( si->shaderText, shaderText );
+			si->shaderText = copystring( shaderText );
 			//%	if( VectorLength( si->vecs[ 0 ] ) )
 			//%		Sys_Printf( "%s\n", shaderText );
 		}
 
 		/* ydnar: clear shader text buffer */
-		shaderText[ 0 ] = '\0';
+		strClear( shaderText );
 
 		/* test for end of file */
-		if ( !GetToken( qtrue ) ) {
+		if ( !GetToken( true ) ) {
 			break;
 		}
 
@@ -1009,16 +998,16 @@ static void ParseShaderFile( const char *filename ){
 		strcpy( si->shader, token );
 
 		/* ignore ":q3map" suffix */
-		suffix = strstr( si->shader, ":q3map" );
+		suffix = strIstr( si->shader, ":q3map" );
 		if ( suffix != NULL ) {
-			*suffix = '\0';
+			strClear( suffix );
 		}
 
 		/* handle { } section */
-		if ( !GetTokenAppend( shaderText, qtrue ) ) {
+		if ( !GetTokenAppend( shaderText, true ) ) {
 			break;
 		}
-		if ( strcmp( token, "{" ) ) {
+		if ( !strEqual( token, "{" ) ) {
 			if ( si != NULL ) {
 				Error( "ParseShaderFile(): %s, line %d: { not found!\nFound instead: %s\nLast known shader: %s\nFile location be: %s\n",
 					   filename, scriptline, token, si->shader, g_strLoadedFileLocation );
@@ -1032,10 +1021,10 @@ static void ParseShaderFile( const char *filename ){
 		while ( 1 )
 		{
 			/* get the next token */
-			if ( !GetTokenAppend( shaderText, qtrue ) ) {
+			if ( !GetTokenAppend( shaderText, true ) ) {
 				break;
 			}
-			if ( !strcmp( token, "}" ) ) {
+			if ( strEqual( token, "}" ) ) {
 				break;
 			}
 
@@ -1045,33 +1034,33 @@ static void ParseShaderFile( const char *filename ){
 			   ----------------------------------------------------------------- */
 
 			/* parse stage directives */
-			if ( !strcmp( token, "{" ) ) {
-				si->hasPasses = qtrue;
+			if ( strEqual( token, "{" ) ) {
+				si->hasPasses = true;
 				while ( 1 )
 				{
-					if ( !GetTokenAppend( shaderText, qtrue ) ) {
+					if ( !GetTokenAppend( shaderText, true ) ) {
 						break;
 					}
-					if ( !strcmp( token, "}" ) ) {
+					if ( strEqual( token, "}" ) ) {
 						break;
 					}
 
 					/* only care about images if we don't have a editor/light image */
-					if ( si->editorImagePath[ 0 ] == '\0' && si->lightImagePath[ 0 ] == '\0' && si->implicitImagePath[ 0 ] == '\0' ) {
+					if ( strEmpty( si->editorImagePath ) && strEmpty( si->lightImagePath ) && strEmpty( si->implicitImagePath ) ) {
 						/* digest any images */
-						if ( !Q_stricmp( token, "map" ) ||
-							 !Q_stricmp( token, "clampMap" ) ||
-							 !Q_stricmp( token, "animMap" ) ||
-							 !Q_stricmp( token, "clampAnimMap" ) ||
-							 !Q_stricmp( token, "mapComp" ) ||
-							 !Q_stricmp( token, "mapNoComp" ) ) {
+						if ( striEqual( token, "map" ) ||
+							 striEqual( token, "clampMap" ) ||
+							 striEqual( token, "animMap" ) ||
+							 striEqual( token, "clampAnimMap" ) ||
+							 striEqual( token, "mapComp" ) ||
+							 striEqual( token, "mapNoComp" ) ) {
 							/* skip one token for animated stages */
-							if ( !Q_stricmp( token, "animMap" ) || !Q_stricmp( token, "clampAnimMap" ) ) {
-								GetTokenAppend( shaderText, qfalse );
+							if ( striEqual( token, "animMap" ) || striEqual( token, "clampAnimMap" ) ) {
+								GetTokenAppend( shaderText, false );
 							}
 
 							/* get an image */
-							GetTokenAppend( shaderText, qfalse );
+							GetTokenAppend( shaderText, false );
 							if ( token[ 0 ] != '*' && token[ 0 ] != '$' ) {
 								strcpy( si->lightImagePath, token );
 								DefaultExtension( si->lightImagePath, ".tga" );
@@ -1090,9 +1079,9 @@ static void ParseShaderFile( const char *filename ){
 			   ----------------------------------------------------------------- */
 
 			/* match surfaceparm */
-			else if ( !Q_stricmp( token, "surfaceparm" ) ) {
-				GetTokenAppend( shaderText, qfalse );
-				if ( ApplySurfaceParm( token, &si->contentFlags, &si->surfaceFlags, &si->compileFlags ) == qfalse ) {
+			else if ( striEqual( token, "surfaceparm" ) ) {
+				GetTokenAppend( shaderText, false );
+				if ( !ApplySurfaceParm( token, &si->contentFlags, &si->surfaceFlags, &si->compileFlags ) ) {
 					Sys_Warning( "Unknown surfaceparm: \"%s\"\n", token );
 				}
 			}
@@ -1103,63 +1092,63 @@ static void ParseShaderFile( const char *filename ){
 			   ----------------------------------------------------------------- */
 
 			/* ydnar: fogparms (for determining fog volumes) */
-			else if ( !Q_stricmp( token, "fogparms" ) ) {
-				si->fogParms = qtrue;
+			else if ( striEqual( token, "fogparms" ) ) {
+				si->fogParms = true;
 			}
 
 			/* ydnar: polygonoffset (for no culling) */
-			else if ( !Q_stricmp( token, "polygonoffset" ) ) {
-				si->polygonOffset = qtrue;
+			else if ( striEqual( token, "polygonoffset" ) ) {
+				si->polygonOffset = true;
 			}
 
 			/* tesssize is used to force liquid surfaces to subdivide */
-			else if ( !Q_stricmp( token, "tessSize" ) || !Q_stricmp( token, "q3map_tessSize" ) /* sof2 */ ) {
-				GetTokenAppend( shaderText, qfalse );
+			else if ( striEqual( token, "tessSize" ) || striEqual( token, "q3map_tessSize" ) /* sof2 */ ) {
+				GetTokenAppend( shaderText, false );
 				si->subdivisions = atof( token );
 			}
 
 			/* cull none will set twoSided (ydnar: added disable too) */
-			else if ( !Q_stricmp( token, "cull" ) ) {
-				GetTokenAppend( shaderText, qfalse );
-				if ( !Q_stricmp( token, "none" ) || !Q_stricmp( token, "disable" ) || !Q_stricmp( token, "twosided" ) ) {
-					si->twoSided = qtrue;
+			else if ( striEqual( token, "cull" ) ) {
+				GetTokenAppend( shaderText, false );
+				if ( striEqual( token, "none" ) || striEqual( token, "disable" ) || striEqual( token, "twosided" ) ) {
+					si->twoSided = true;
 				}
 			}
 
 			/* deformVertexes autosprite[ 2 ]
 			   we catch this so autosprited surfaces become point
 			   lights instead of area lights */
-			else if ( !Q_stricmp( token, "deformVertexes" ) ) {
-				GetTokenAppend( shaderText, qfalse );
+			else if ( striEqual( token, "deformVertexes" ) ) {
+				GetTokenAppend( shaderText, false );
 
 				/* deformVertexes autosprite(2) */
-				if ( !Q_strncasecmp( token, "autosprite", 10 ) ) {
+				if ( striEqualPrefix( token, "autosprite" ) ) {
 					/* set it as autosprite and detail */
-					si->autosprite = qtrue;
+					si->autosprite = true;
 					ApplySurfaceParm( "detail", &si->contentFlags, &si->surfaceFlags, &si->compileFlags );
 
 					/* ydnar: gs mods: added these useful things */
-					si->noClip = qtrue;
-					si->notjunc = qtrue;
+					si->noClip = true;
+					si->notjunc = true;
 				}
 
 				/* deformVertexes move <x> <y> <z> <func> <base> <amplitude> <phase> <freq> (ydnar: for particle studio support) */
-				if ( !Q_stricmp( token, "move" ) ) {
+				if ( striEqual( token, "move" ) ) {
 					vec3_t amt, mins, maxs;
 					float base, amp;
 
 
 					/* get move amount */
-					GetTokenAppend( shaderText, qfalse );   amt[ 0 ] = atof( token );
-					GetTokenAppend( shaderText, qfalse );   amt[ 1 ] = atof( token );
-					GetTokenAppend( shaderText, qfalse );   amt[ 2 ] = atof( token );
+					GetTokenAppend( shaderText, false );   amt[ 0 ] = atof( token );
+					GetTokenAppend( shaderText, false );   amt[ 1 ] = atof( token );
+					GetTokenAppend( shaderText, false );   amt[ 2 ] = atof( token );
 
 					/* skip func */
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 
 					/* get base and amplitude */
-					GetTokenAppend( shaderText, qfalse );   base = atof( token );
-					GetTokenAppend( shaderText, qfalse );   amp = atof( token );
+					GetTokenAppend( shaderText, false );   base = atof( token );
+					GetTokenAppend( shaderText, false );   amp = atof( token );
 
 					/* calculate */
 					VectorScale( amt, base, mins );
@@ -1170,26 +1159,25 @@ static void ParseShaderFile( const char *filename ){
 			}
 
 			/* light <value> (old-style flare specification) */
-			else if ( !Q_stricmp( token, "light" ) ) {
-				GetTokenAppend( shaderText, qfalse );
+			else if ( striEqual( token, "light" ) ) {
+				GetTokenAppend( shaderText, false );
 				si->flareShader = game->flareShader;
 			}
 
 			/* ydnar: damageShader <shader> <health> (sof2 mods) */
-			else if ( !Q_stricmp( token, "damageShader" ) ) {
-				GetTokenAppend( shaderText, qfalse );
-				if ( token[ 0 ] != '\0' ) {
-					si->damageShader = safe_malloc( strlen( token ) + 1 );
-					strcpy( si->damageShader, token );
+			else if ( striEqual( token, "damageShader" ) ) {
+				GetTokenAppend( shaderText, false );
+				if ( !strEmpty( token ) ) {
+					si->damageShader = copystring( token );
 				}
-				GetTokenAppend( shaderText, qfalse );   /* don't do anything with health */
+				GetTokenAppend( shaderText, false );   /* don't do anything with health */
 			}
 
 			/* ydnar: enemy territory implicit shaders */
-			else if ( !Q_stricmp( token, "implicitMap" ) ) {
+			else if ( striEqual( token, "implicitMap" ) ) {
 				si->implicitMap = IM_OPAQUE;
-				GetTokenAppend( shaderText, qfalse );
-				if ( token[ 0 ] == '-' && token[ 1 ] == '\0' ) {
+				GetTokenAppend( shaderText, false );
+				if ( strEqual( token, "-" ) ) {
 					sprintf( si->implicitImagePath, "%s.tga", si->shader );
 				}
 				else{
@@ -1197,10 +1185,10 @@ static void ParseShaderFile( const char *filename ){
 				}
 			}
 
-			else if ( !Q_stricmp( token, "implicitMask" ) ) {
+			else if ( striEqual( token, "implicitMask" ) ) {
 				si->implicitMap = IM_MASKED;
-				GetTokenAppend( shaderText, qfalse );
-				if ( token[ 0 ] == '-' && token[ 1 ] == '\0' ) {
+				GetTokenAppend( shaderText, false );
+				if ( strEqual( token, "-" ) ) {
 					sprintf( si->implicitImagePath, "%s.tga", si->shader );
 				}
 				else{
@@ -1208,10 +1196,10 @@ static void ParseShaderFile( const char *filename ){
 				}
 			}
 
-			else if ( !Q_stricmp( token, "implicitBlend" ) ) {
+			else if ( striEqual( token, "implicitBlend" ) ) {
 				si->implicitMap = IM_MASKED;
-				GetTokenAppend( shaderText, qfalse );
-				if ( token[ 0 ] == '-' && token[ 1 ] == '\0' ) {
+				GetTokenAppend( shaderText, false );
+				if ( strEqual( token, "-" ) ) {
 					sprintf( si->implicitImagePath, "%s.tga", si->shader );
 				}
 				else{
@@ -1225,44 +1213,44 @@ static void ParseShaderFile( const char *filename ){
 			   ----------------------------------------------------------------- */
 
 			/* qer_editorimage <image> */
-			else if ( !Q_stricmp( token, "qer_editorImage" ) ) {
-				GetTokenAppend( shaderText, qfalse );
+			else if ( striEqual( token, "qer_editorImage" ) ) {
+				GetTokenAppend( shaderText, false );
 				strcpy( si->editorImagePath, token );
 				DefaultExtension( si->editorImagePath, ".tga" );
 			}
 
 			/* ydnar: q3map_normalimage <image> (bumpmapping normal map) */
-			else if ( !Q_stricmp( token, "q3map_normalImage" ) ) {
-				GetTokenAppend( shaderText, qfalse );
+			else if ( striEqual( token, "q3map_normalImage" ) ) {
+				GetTokenAppend( shaderText, false );
 				strcpy( si->normalImagePath, token );
 				DefaultExtension( si->normalImagePath, ".tga" );
 			}
 
 			/* q3map_lightimage <image> */
-			else if ( !Q_stricmp( token, "q3map_lightImage" ) ) {
-				GetTokenAppend( shaderText, qfalse );
+			else if ( striEqual( token, "q3map_lightImage" ) ) {
+				GetTokenAppend( shaderText, false );
 				strcpy( si->lightImagePath, token );
 				DefaultExtension( si->lightImagePath, ".tga" );
 			}
 
 			/* ydnar: skyparms <outer image> <cloud height> <inner image> */
-			else if ( !Q_stricmp( token, "skyParms" ) ) {
+			else if ( striEqual( token, "skyParms" ) ) {
 				/* get image base */
-				GetTokenAppend( shaderText, qfalse );
+				GetTokenAppend( shaderText, false );
 
 				/* ignore bogus paths */
-				if ( Q_stricmp( token, "-" ) && Q_stricmp( token, "full" ) ) {
+				if ( !strEqual( token, "-" ) && !striEqual( token, "full" ) ) {
 					strcpy( si->skyParmsImageBase, token );
 
 					/* use top image as sky light image */
-					if ( si->lightImagePath[ 0 ] == '\0' ) {
+					if ( strEmpty( si->lightImagePath ) ) {
 						sprintf( si->lightImagePath, "%s_up.tga", si->skyParmsImageBase );
 					}
 				}
 
 				/* skip rest of line */
-				GetTokenAppend( shaderText, qfalse );
-				GetTokenAppend( shaderText, qfalse );
+				GetTokenAppend( shaderText, false );
+				GetTokenAppend( shaderText, false );
 			}
 
 			/* -----------------------------------------------------------------
@@ -1274,30 +1262,24 @@ static void ParseShaderFile( const char *filename ){
 			   intensity falls off with angle but not distance 100 is a fairly bright sun
 			   degree of 0 = from the east, 90 = north, etc.  altitude of 0 = sunrise/set, 90 = noon
 			   ydnar: sof2map has bareword 'sun' token, so we support that as well */
-			else if ( !Q_stricmp( token, "sun" ) /* sof2 */ || !Q_stricmp( token, "q3map_sun" ) || !Q_stricmp( token, "q3map_sunExt" ) ) {
+			else if ( striEqual( token, "sun" ) /* sof2 */ || striEqual( token, "q3map_sun" ) || striEqual( token, "q3map_sunExt" ) ) {
 				float a, b;
 				sun_t       *sun;
-				qboolean ext = qfalse;
-
-
 				/* ydnar: extended sun directive? */
-				if ( !Q_stricmp( token, "q3map_sunext" ) ) {
-					ext = qtrue;
-				}
+				const bool ext = striEqual( token, "q3map_sunext" );
 
 				/* allocate sun */
-				sun = safe_malloc( sizeof( *sun ) );
-				memset( sun, 0, sizeof( *sun ) );
+				sun = safe_calloc( sizeof( *sun ) );
 
 				/* set style */
 				sun->style = si->lightStyle;
 
 				/* get color */
-				GetTokenAppend( shaderText, qfalse );
+				GetTokenAppend( shaderText, false );
 				sun->color[ 0 ] = atof( token );
-				GetTokenAppend( shaderText, qfalse );
+				GetTokenAppend( shaderText, false );
 				sun->color[ 1 ] = atof( token );
-				GetTokenAppend( shaderText, qfalse );
+				GetTokenAppend( shaderText, false );
 				sun->color[ 2 ] = atof( token );
 
 				if ( colorsRGB ) {
@@ -1310,15 +1292,15 @@ static void ParseShaderFile( const char *filename ){
 				ColorNormalize( sun->color, sun->color );
 
 				/* scale color by brightness */
-				GetTokenAppend( shaderText, qfalse );
+				GetTokenAppend( shaderText, false );
 				sun->photons = atof( token );
 
 				/* get sun angle/elevation */
-				GetTokenAppend( shaderText, qfalse );
+				GetTokenAppend( shaderText, false );
 				a = atof( token );
 				a = a / 180.0f * Q_PI;
 
-				GetTokenAppend( shaderText, qfalse );
+				GetTokenAppend( shaderText, false );
 				b = atof( token );
 				b = b / 180.0f * Q_PI;
 
@@ -1331,11 +1313,11 @@ static void ParseShaderFile( const char *filename ){
 
 				/* ydnar: get sun angular deviance/samples */
 				if ( ext && TokenAvailable() ) {
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					sun->deviance = atof( token );
 					sun->deviance = sun->deviance / 180.0f * Q_PI;
 
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					sun->numSamples = atoi( token );
 				}
 
@@ -1351,18 +1333,18 @@ static void ParseShaderFile( const char *filename ){
 			}
 
 			/* match q3map_ */
-			else if ( !Q_strncasecmp( token, "q3map_", 6 ) ) {
+			else if ( striEqualPrefix( token, "q3map_" ) ) {
 				/* ydnar: q3map_baseShader <shader> (inherit this shader's parameters) */
-				if ( !Q_stricmp( token, "q3map_baseShader" ) ) {
+				if ( striEqual( token, "q3map_baseShader" ) ) {
 					shaderInfo_t    *si2;
-					qboolean oldWarnImage;
+					bool oldWarnImage;
 
 
 					/* get shader */
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					//%	Sys_FPrintf( SYS_VRB, "Shader %s has base shader %s\n", si->shader, token );
 					oldWarnImage = warnImage;
-					warnImage = qfalse;
+					warnImage = false;
 					si2 = ShaderInfoForShader( token );
 					warnImage = oldWarnImage;
 
@@ -1378,79 +1360,77 @@ static void ParseShaderFile( const char *filename ){
 						strcpy( si->shader, temp );
 						si->shaderWidth = 0;
 						si->shaderHeight = 0;
-						si->finished = qfalse;
+						si->finished = false;
 					}
 				}
 
 				/* ydnar: q3map_surfacemodel <path to model> <density> <min scale> <max scale> <min angle> <max angle> <oriented (0 or 1)> */
-				else if ( !Q_stricmp( token, "q3map_surfacemodel" ) ) {
+				else if ( striEqual( token, "q3map_surfacemodel" ) ) {
 					surfaceModel_t  *model;
 
 					/* allocate new model and attach it */
-					model = safe_malloc( sizeof( *model ) );
-					memset( model, 0, sizeof( *model ) );
+					model = safe_calloc( sizeof( *model ) );
 					model->next = si->surfaceModel;
 					si->surfaceModel = model;
 
 					/* get parameters */
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					strcpy( model->model, token );
 
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					model->density = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					model->odds = atof( token );
 
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					model->minScale = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					model->maxScale = atof( token );
 
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					model->minAngle = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					model->maxAngle = atof( token );
 
-					GetTokenAppend( shaderText, qfalse );
-					model->oriented = ( token[ 0 ] == '1' ? qtrue : qfalse );
+					GetTokenAppend( shaderText, false );
+					model->oriented = ( token[ 0 ] == '1' );
 				}
 
 				/* ydnar/sd: q3map_foliage <path to model> <scale> <density> <odds> <invert alpha (1 or 0)> */
-				else if ( !Q_stricmp( token, "q3map_foliage" ) ) {
+				else if ( striEqual( token, "q3map_foliage" ) ) {
 					foliage_t   *foliage;
 
 
 					/* allocate new foliage struct and attach it */
-					foliage = safe_malloc( sizeof( *foliage ) );
-					memset( foliage, 0, sizeof( *foliage ) );
+					foliage = safe_calloc( sizeof( *foliage ) );
 					foliage->next = si->foliage;
 					si->foliage = foliage;
 
 					/* get parameters */
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					strcpy( foliage->model, token );
 
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					foliage->scale = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					foliage->density = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					foliage->odds = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					foliage->inverseAlpha = atoi( token );
 				}
 
 				/* ydnar: q3map_bounce <value> (fraction of light to re-emit during radiosity passes) */
-				else if ( !Q_stricmp( token, "q3map_bounce" ) || !Q_stricmp( token, "q3map_bounceScale" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_bounce" ) || striEqual( token, "q3map_bounceScale" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->bounceScale = atof( token );
 				}
 
 				/* ydnar/splashdamage: q3map_skyLight <value> <iterations> */
-				else if ( !Q_stricmp( token, "q3map_skyLight" )  ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_skyLight" )  ) {
+					GetTokenAppend( shaderText, false );
 					si->skyLightValue = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->skyLightIterations = atoi( token );
 
 					/* clamp */
@@ -1463,14 +1443,14 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* q3map_surfacelight <value> */
-				else if ( !Q_stricmp( token, "q3map_surfacelight" )  ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_surfacelight" )  ) {
+					GetTokenAppend( shaderText, false );
 					si->value = atof( token );
 				}
 
 				/* q3map_lightStyle (sof2/jk2 lightstyle) */
-				else if ( !Q_stricmp( token, "q3map_lightStyle" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_lightStyle" ) ) {
+					GetTokenAppend( shaderText, false );
 					val = atoi( token );
 					if ( val < 0 ) {
 						val = 0;
@@ -1482,13 +1462,13 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* wolf: q3map_lightRGB <red> <green> <blue> */
-				else if ( !Q_stricmp( token, "q3map_lightRGB" ) ) {
+				else if ( striEqual( token, "q3map_lightRGB" ) ) {
 					VectorClear( si->color );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->color[ 0 ] = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->color[ 1 ] = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->color[ 2 ] = atof( token );
 					if ( colorsRGB ) {
 						si->color[0] = Image_LinearFloatFromsRGBFloat( si->color[0] );
@@ -1499,33 +1479,33 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* q3map_lightSubdivide <value> */
-				else if ( !Q_stricmp( token, "q3map_lightSubdivide" )  ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_lightSubdivide" )  ) {
+					GetTokenAppend( shaderText, false );
 					si->lightSubdivide = atoi( token );
 				}
 
 				/* q3map_backsplash <percent> <distance> */
-				else if ( !Q_stricmp( token, "q3map_backsplash" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_backsplash" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->backsplashFraction = atof( token ) * 0.01f;
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->backsplashDistance = atof( token );
 				}
 
 				/* q3map_floodLight <r> <g> <b> <diste> <intensity> <light_direction_power> */
-				else if ( !Q_stricmp( token, "q3map_floodLight" ) ) {
+				else if ( striEqual( token, "q3map_floodLight" ) ) {
 					/* get color */
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->floodlightRGB[ 0 ] = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->floodlightRGB[ 1 ] = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->floodlightRGB[ 2 ] = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->floodlightDistance = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->floodlightIntensity = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->floodlightDirectionScale = atof( token );
 					if ( colorsRGB ) {
 						si->floodlightRGB[0] = Image_LinearFloatFromsRGBFloat( si->floodlightRGB[0] );
@@ -1536,40 +1516,40 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* jal: q3map_nodirty : skip dirty */
-				else if ( !Q_stricmp( token, "q3map_nodirty" ) ) {
-					si->noDirty = qtrue;
+				else if ( striEqual( token, "q3map_nodirty" ) ) {
+					si->noDirty = true;
 				}
 
 				/* q3map_lightmapSampleSize <value> */
-				else if ( !Q_stricmp( token, "q3map_lightmapSampleSize" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_lightmapSampleSize" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->lightmapSampleSize = atoi( token );
 				}
 
 				/* q3map_lightmapSampleOffset <value> */
-				else if ( !Q_stricmp( token, "q3map_lightmapSampleOffset" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_lightmapSampleOffset" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->lightmapSampleOffset = atof( token );
 				}
 
 				/* ydnar: q3map_lightmapFilterRadius <self> <other> */
-				else if ( !Q_stricmp( token, "q3map_lightmapFilterRadius" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_lightmapFilterRadius" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->lmFilterRadius = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->lightFilterRadius = atof( token );
 				}
 
 				/* ydnar: q3map_lightmapAxis [xyz] */
-				else if ( !Q_stricmp( token, "q3map_lightmapAxis" ) ) {
-					GetTokenAppend( shaderText, qfalse );
-					if ( !Q_stricmp( token, "x" ) ) {
+				else if ( striEqual( token, "q3map_lightmapAxis" ) ) {
+					GetTokenAppend( shaderText, false );
+					if ( striEqual( token, "x" ) ) {
 						VectorSet( si->lightmapAxis, 1, 0, 0 );
 					}
-					else if ( !Q_stricmp( token, "y" ) ) {
+					else if ( striEqual( token, "y" ) ) {
 						VectorSet( si->lightmapAxis, 0, 1, 0 );
 					}
-					else if ( !Q_stricmp( token, "z" ) ) {
+					else if ( striEqual( token, "z" ) ) {
 						VectorSet( si->lightmapAxis, 0, 0, 1 );
 					}
 					else
@@ -1580,10 +1560,10 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* ydnar: q3map_lightmapSize <width> <height> (for autogenerated shaders + external tga lightmaps) */
-				else if ( !Q_stricmp( token, "q3map_lightmapSize" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_lightmapSize" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->lmCustomWidth = atoi( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->lmCustomHeight = atoi( token );
 
 					/* must be a power of 2 */
@@ -1597,133 +1577,127 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* ydnar: q3map_lightmapBrightness N (for autogenerated shaders + external tga lightmaps) */
-				else if ( !Q_stricmp( token, "q3map_lightmapBrightness" ) || !Q_stricmp( token, "q3map_lightmapGamma" ) ) {
-					GetTokenAppend( shaderText, qfalse );
-					si->lmBrightness = atof( token );
+				else if ( striEqual( token, "q3map_lightmapBrightness" ) || striEqual( token, "q3map_lightmapGamma" ) ) {
+					GetTokenAppend( shaderText, false );
+					si->lmBrightness *= atof( token );
 					if ( si->lmBrightness < 0 ) {
 						si->lmBrightness = 1.0;
 					}
 				}
 
 				/* q3map_vertexScale (scale vertex lighting by this fraction) */
-				else if ( !Q_stricmp( token, "q3map_vertexScale" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_vertexScale" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->vertexScale *= atof( token );
 				}
 
 				/* q3map_noVertexLight */
-				else if ( !Q_stricmp( token, "q3map_noVertexLight" ) ) {
-					si->noVertexLight = qtrue;
+				else if ( striEqual( token, "q3map_noVertexLight" ) ) {
+					si->noVertexLight = true;
 				}
 
 				/* q3map_flare[Shader] <shader> */
-				else if ( !Q_stricmp( token, "q3map_flare" ) || !Q_stricmp( token, "q3map_flareShader" ) ) {
-					GetTokenAppend( shaderText, qfalse );
-					if ( token[ 0 ] != '\0' ) {
-						si->flareShader = safe_malloc( strlen( token ) + 1 );
-						strcpy( si->flareShader, token );
+				else if ( striEqual( token, "q3map_flare" ) || striEqual( token, "q3map_flareShader" ) ) {
+					GetTokenAppend( shaderText, false );
+					if ( !strEmpty( token ) ) {
+						si->flareShader = copystring( token );
 					}
 				}
 
 				/* q3map_backShader <shader> */
-				else if ( !Q_stricmp( token, "q3map_backShader" ) ) {
-					GetTokenAppend( shaderText, qfalse );
-					if ( token[ 0 ] != '\0' ) {
-						si->backShader = safe_malloc( strlen( token ) + 1 );
-						strcpy( si->backShader, token );
+				else if ( striEqual( token, "q3map_backShader" ) ) {
+					GetTokenAppend( shaderText, false );
+					if ( !strEmpty( token ) ) {
+						si->backShader = copystring( token );
 					}
 				}
 
 				/* ydnar: q3map_cloneShader <shader> */
-				else if ( !Q_stricmp( token, "q3map_cloneShader" ) ) {
-					GetTokenAppend( shaderText, qfalse );
-					if ( token[ 0 ] != '\0' ) {
-						si->cloneShader = safe_malloc( strlen( token ) + 1 );
-						strcpy( si->cloneShader, token );
+				else if ( striEqual( token, "q3map_cloneShader" ) ) {
+					GetTokenAppend( shaderText, false );
+					if ( !strEmpty( token ) ) {
+						si->cloneShader = copystring( token );
 					}
 				}
 
 				/* q3map_remapShader <shader> */
-				else if ( !Q_stricmp( token, "q3map_remapShader" ) ) {
-					GetTokenAppend( shaderText, qfalse );
-					if ( token[ 0 ] != '\0' ) {
-						si->remapShader = safe_malloc( strlen( token ) + 1 );
-						strcpy( si->remapShader, token );
+				else if ( striEqual( token, "q3map_remapShader" ) ) {
+					GetTokenAppend( shaderText, false );
+					if ( !strEmpty( token ) ) {
+						si->remapShader = copystring( token );
 					}
 				}
 
 				/* q3map_deprecateShader <shader> */
-				else if ( !Q_stricmp( token, "q3map_deprecateShader" ) ) {
-					GetTokenAppend( shaderText, qfalse );
-					if ( token[ 0 ] != '\0' ) {
-
-						si->deprecateShader = safe_malloc( strlen( token ) + 1 );
-						strcpy( si->deprecateShader, token );
+				else if ( striEqual( token, "q3map_deprecateShader" ) ) {
+					GetTokenAppend( shaderText, false );
+					if ( !strEmpty( token ) ) {
+						si->deprecateShader = copystring( token );
 					}
 				}
 
 				/* ydnar: q3map_offset <value> */
-				else if ( !Q_stricmp( token, "q3map_offset" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_offset" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->offset = atof( token );
 				}
 
 				/* ydnar: q3map_fur <numlayers> <offset> <fade> */
-				else if ( !Q_stricmp( token, "q3map_fur" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_fur" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->furNumLayers = atoi( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->furOffset = atof( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->furFade = atof( token );
 				}
 
 				/* ydnar: gs mods: legacy support for terrain/terrain2 shaders */
-				else if ( !Q_stricmp( token, "q3map_terrain" ) ) {
+				else if ( striEqual( token, "q3map_terrain" ) ) {
 					/* team arena terrain is assumed to be nonplanar, with full normal averaging,
 					   passed through the metatriangle surface pipeline, with a lightmap axis on z */
-					si->legacyTerrain = qtrue;
-					si->noClip = qtrue;
-					si->notjunc = qtrue;
-					si->indexed = qtrue;
-					si->nonplanar = qtrue;
-					si->forceMeta = qtrue;
+					si->legacyTerrain = true;
+					si->noClip = true;
+					si->notjunc = true;
+					si->indexed = true;
+					si->nonplanar = true;
+					si->forceMeta = true;
 					si->shadeAngleDegrees = 179.0f;
 					//%	VectorSet( si->lightmapAxis, 0, 0, 1 );	/* ydnar 2002-09-21: turning this off for better lightmapping of cliff faces */
 				}
 
 				/* ydnar: picomodel: q3map_forceMeta (forces brush faces and/or triangle models to go through the metasurface pipeline) */
-				else if ( !Q_stricmp( token, "q3map_forceMeta" ) ) {
-					si->forceMeta = qtrue;
+				else if ( striEqual( token, "q3map_forceMeta" ) ) {
+					si->forceMeta = true;
 				}
 
 				/* ydnar: gs mods: q3map_shadeAngle <degrees> */
-				else if ( !Q_stricmp( token, "q3map_shadeAngle" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_shadeAngle" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->shadeAngleDegrees = atof( token );
 				}
 
 				/* ydnar: q3map_textureSize <width> <height> (substitute for q3map_lightimage derivation for terrain) */
-				else if ( !Q_stricmp( token, "q3map_textureSize" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_textureSize" ) ) {
+					GetTokenAppend( shaderText, false );
 					si->shaderWidth = atoi( token );
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 					si->shaderHeight = atoi( token );
 				}
 
 				/* ydnar: gs mods: q3map_tcGen <style> <parameters> */
-				else if ( !Q_stricmp( token, "q3map_tcGen" ) ) {
-					si->tcGen = qtrue;
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_tcGen" ) ) {
+					si->tcGen = true;
+					GetTokenAppend( shaderText, false );
 
 					/* q3map_tcGen vector <s vector> <t vector> */
-					if ( !Q_stricmp( token, "vector" ) ) {
+					if ( striEqual( token, "vector" ) ) {
 						Parse1DMatrixAppend( shaderText, 3, si->vecs[ 0 ] );
 						Parse1DMatrixAppend( shaderText, 3, si->vecs[ 1 ] );
 					}
 
 					/* q3map_tcGen ivector <1.0/s vector> <1.0/t vector> (inverse vector, easier for mappers to understand) */
-					else if ( !Q_stricmp( token, "ivector" ) ) {
+					else if ( striEqual( token, "ivector" ) ) {
 						Parse1DMatrixAppend( shaderText, 3, si->vecs[ 0 ] );
 						Parse1DMatrixAppend( shaderText, 3, si->vecs[ 1 ] );
 						for ( i = 0; i < 3; i++ )
@@ -1741,19 +1715,18 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* ydnar: gs mods: q3map_[color|rgb|alpha][Gen|Mod] <style> <parameters> */
-				else if ( !Q_stricmp( token, "q3map_colorGen" ) || !Q_stricmp( token, "q3map_colorMod" ) ||
-						  !Q_stricmp( token, "q3map_rgbGen" ) || !Q_stricmp( token, "q3map_rgbMod" ) ||
-						  !Q_stricmp( token, "q3map_alphaGen" ) || !Q_stricmp( token, "q3map_alphaMod" ) ) {
+				else if ( striEqual( token, "q3map_colorGen" ) || striEqual( token, "q3map_colorMod" ) ||
+						  striEqual( token, "q3map_rgbGen" ) || striEqual( token, "q3map_rgbMod" ) ||
+						  striEqual( token, "q3map_alphaGen" ) || striEqual( token, "q3map_alphaMod" ) ) {
 					colorMod_t  *cm, *cm2;
 					int alpha;
 
 
 					/* alphamods are colormod + 1 */
-					alpha = ( !Q_stricmp( token, "q3map_alphaGen" ) || !Q_stricmp( token, "q3map_alphaMod" ) ) ? 1 : 0;
+					alpha = ( striEqual( token, "q3map_alphaGen" ) || striEqual( token, "q3map_alphaMod" ) ) ? 1 : 0;
 
 					/* allocate new colormod */
-					cm = safe_malloc( sizeof( *cm ) );
-					memset( cm, 0, sizeof( *cm ) );
+					cm = safe_calloc( sizeof( *cm ) );
 
 					/* attach to shader */
 					if ( si->colorMod == NULL ) {
@@ -1771,17 +1744,17 @@ static void ParseShaderFile( const char *filename ){
 					}
 
 					/* get type */
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 
 					/* alpha set|const A */
-					if ( alpha && ( !Q_stricmp( token, "set" ) || !Q_stricmp( token, "const" ) ) ) {
+					if ( alpha && ( striEqual( token, "set" ) || striEqual( token, "const" ) ) ) {
 						cm->type = CM_ALPHA_SET;
-						GetTokenAppend( shaderText, qfalse );
+						GetTokenAppend( shaderText, false );
 						cm->data[ 0 ] = atof( token );
 					}
 
 					/* color|rgb set|const ( X Y Z ) */
-					else if ( !Q_stricmp( token, "set" ) || !Q_stricmp( token, "const" ) ) {
+					else if ( striEqual( token, "set" ) || striEqual( token, "const" ) ) {
 						cm->type = CM_COLOR_SET;
 						Parse1DMatrixAppend( shaderText, 3, cm->data );
 						if ( colorsRGB ) {
@@ -1792,44 +1765,44 @@ static void ParseShaderFile( const char *filename ){
 					}
 
 					/* alpha scale A */
-					else if ( alpha && !Q_stricmp( token, "scale" ) ) {
+					else if ( alpha && striEqual( token, "scale" ) ) {
 						cm->type = CM_ALPHA_SCALE;
-						GetTokenAppend( shaderText, qfalse );
+						GetTokenAppend( shaderText, false );
 						cm->data[ 0 ] = atof( token );
 					}
 
 					/* color|rgb scale ( X Y Z ) */
-					else if ( !Q_stricmp( token, "scale" ) ) {
+					else if ( striEqual( token, "scale" ) ) {
 						cm->type = CM_COLOR_SCALE;
 						Parse1DMatrixAppend( shaderText, 3, cm->data );
 					}
 
 					/* dotProduct ( X Y Z ) */
-					else if ( !Q_stricmp( token, "dotProduct" ) ) {
+					else if ( striEqual( token, "dotProduct" ) ) {
 						cm->type = CM_COLOR_DOT_PRODUCT + alpha;
 						Parse1DMatrixAppend( shaderText, 3, cm->data );
 					}
 
 					/* dotProductScale ( X Y Z MIN MAX ) */
-					else if ( !Q_stricmp( token, "dotProductScale" ) ) {
+					else if ( striEqual( token, "dotProductScale" ) ) {
 						cm->type = CM_COLOR_DOT_PRODUCT_SCALE + alpha;
 						Parse1DMatrixAppend( shaderText, 5, cm->data );
 					}
 
 					/* dotProduct2 ( X Y Z ) */
-					else if ( !Q_stricmp( token, "dotProduct2" ) ) {
+					else if ( striEqual( token, "dotProduct2" ) ) {
 						cm->type = CM_COLOR_DOT_PRODUCT_2 + alpha;
 						Parse1DMatrixAppend( shaderText, 3, cm->data );
 					}
 
 					/* dotProduct2scale ( X Y Z MIN MAX ) */
-					else if ( !Q_stricmp( token, "dotProduct2scale" ) ) {
+					else if ( striEqual( token, "dotProduct2scale" ) ) {
 						cm->type = CM_COLOR_DOT_PRODUCT_2_SCALE + alpha;
 						Parse1DMatrixAppend( shaderText, 5, cm->data );
 					}
 
 					/* volume */
-					else if ( !Q_stricmp( token, "volume" ) ) {
+					else if ( striEqual( token, "volume" ) ) {
 						/* special stub mode for flagging volume brushes */
 						cm->type = CM_VOLUME;
 					}
@@ -1841,35 +1814,35 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* ydnar: gs mods: q3map_tcMod <style> <parameters> */
-				else if ( !Q_stricmp( token, "q3map_tcMod" ) ) {
+				else if ( striEqual( token, "q3map_tcMod" ) ) {
 					float a, b;
 
 
-					GetTokenAppend( shaderText, qfalse );
+					GetTokenAppend( shaderText, false );
 
 					/* q3map_tcMod [translate | shift | offset] <s> <t> */
-					if ( !Q_stricmp( token, "translate" ) || !Q_stricmp( token, "shift" ) || !Q_stricmp( token, "offset" ) ) {
-						GetTokenAppend( shaderText, qfalse );
+					if ( striEqual( token, "translate" ) || striEqual( token, "shift" ) || striEqual( token, "offset" ) ) {
+						GetTokenAppend( shaderText, false );
 						a = atof( token );
-						GetTokenAppend( shaderText, qfalse );
+						GetTokenAppend( shaderText, false );
 						b = atof( token );
 
 						TCModTranslate( si->mod, a, b );
 					}
 
 					/* q3map_tcMod scale <s> <t> */
-					else if ( !Q_stricmp( token, "scale" ) ) {
-						GetTokenAppend( shaderText, qfalse );
+					else if ( striEqual( token, "scale" ) ) {
+						GetTokenAppend( shaderText, false );
 						a = atof( token );
-						GetTokenAppend( shaderText, qfalse );
+						GetTokenAppend( shaderText, false );
 						b = atof( token );
 
 						TCModScale( si->mod, a, b );
 					}
 
 					/* q3map_tcMod rotate <s> <t> (fixme: make this communitive) */
-					else if ( !Q_stricmp( token, "rotate" ) ) {
-						GetTokenAppend( shaderText, qfalse );
+					else if ( striEqual( token, "rotate" ) ) {
+						GetTokenAppend( shaderText, false );
 						a = atof( token );
 						TCModRotate( si->mod, a );
 					}
@@ -1879,105 +1852,105 @@ static void ParseShaderFile( const char *filename ){
 				}
 
 				/* q3map_fogDir (direction a fog shader fades from transparent to opaque) */
-				else if ( !Q_stricmp( token, "q3map_fogDir" ) ) {
+				else if ( striEqual( token, "q3map_fogDir" ) ) {
 					Parse1DMatrixAppend( shaderText, 3, si->fogDir );
 					VectorNormalize( si->fogDir, si->fogDir );
 				}
 
 				/* q3map_globaltexture */
-				else if ( !Q_stricmp( token, "q3map_globaltexture" )  ) {
-					si->globalTexture = qtrue;
+				else if ( striEqual( token, "q3map_globaltexture" )  ) {
+					si->globalTexture = true;
 				}
 
 				/* ydnar: gs mods: q3map_nonplanar (make it a nonplanar merge candidate for meta surfaces) */
-				else if ( !Q_stricmp( token, "q3map_nonplanar" ) ) {
-					si->nonplanar = qtrue;
+				else if ( striEqual( token, "q3map_nonplanar" ) ) {
+					si->nonplanar = true;
 				}
 
 				/* ydnar: gs mods: q3map_noclip (preserve original face winding, don't clip by bsp tree) */
-				else if ( !Q_stricmp( token, "q3map_noclip" ) ) {
-					si->noClip = qtrue;
+				else if ( striEqual( token, "q3map_noclip" ) ) {
+					si->noClip = true;
 				}
 
 				/* q3map_notjunc */
-				else if ( !Q_stricmp( token, "q3map_notjunc" ) ) {
-					si->notjunc = qtrue;
+				else if ( striEqual( token, "q3map_notjunc" ) ) {
+					si->notjunc = true;
 				}
 
 				/* q3map_nofog */
-				else if ( !Q_stricmp( token, "q3map_nofog" ) ) {
-					si->noFog = qtrue;
+				else if ( striEqual( token, "q3map_nofog" ) ) {
+					si->noFog = true;
 				}
 
 				/* ydnar: gs mods: q3map_indexed (for explicit terrain-style indexed mapping) */
-				else if ( !Q_stricmp( token, "q3map_indexed" ) ) {
-					si->indexed = qtrue;
+				else if ( striEqual( token, "q3map_indexed" ) ) {
+					si->indexed = true;
 				}
 
 				/* ydnar: q3map_invert (inverts a drawsurface's facing) */
-				else if ( !Q_stricmp( token, "q3map_invert" ) ) {
-					si->invert = qtrue;
+				else if ( striEqual( token, "q3map_invert" ) ) {
+					si->invert = true;
 				}
 
 				/* ydnar: gs mods: q3map_lightmapMergable (ok to merge non-planar */
-				else if ( !Q_stricmp( token, "q3map_lightmapMergable" ) ) {
-					si->lmMergable = qtrue;
+				else if ( striEqual( token, "q3map_lightmapMergable" ) ) {
+					si->lmMergable = true;
 				}
 
 				/* ydnar: q3map_nofast */
-				else if ( !Q_stricmp( token, "q3map_noFast" ) ) {
-					si->noFast = qtrue;
+				else if ( striEqual( token, "q3map_noFast" ) ) {
+					si->noFast = true;
 				}
 
 				/* q3map_patchshadows */
-				else if ( !Q_stricmp( token, "q3map_patchShadows" ) ) {
-					si->patchShadows = qtrue;
+				else if ( striEqual( token, "q3map_patchShadows" ) ) {
+					si->patchShadows = true;
 				}
 
 				/* q3map_vertexshadows */
-				else if ( !Q_stricmp( token, "q3map_vertexShadows" ) ) {
-					si->vertexShadows = qtrue;  /* ydnar */
+				else if ( striEqual( token, "q3map_vertexShadows" ) ) {
+					si->vertexShadows = true;  /* ydnar */
 
 				}
 				/* q3map_novertexshadows */
-				else if ( !Q_stricmp( token, "q3map_noVertexShadows" ) ) {
-					si->vertexShadows = qfalse; /* ydnar */
+				else if ( striEqual( token, "q3map_noVertexShadows" ) ) {
+					si->vertexShadows = false; /* ydnar */
 
 				}
 				/* q3map_splotchfix (filter dark lightmap luxels on lightmapped models) */
-				else if ( !Q_stricmp( token, "q3map_splotchfix" ) ) {
-					si->splotchFix = qtrue; /* ydnar */
+				else if ( striEqual( token, "q3map_splotchfix" ) ) {
+					si->splotchFix = true; /* ydnar */
 
 				}
 				/* q3map_forcesunlight */
-				else if ( !Q_stricmp( token, "q3map_forceSunlight" ) ) {
-					si->forceSunlight = qtrue;
+				else if ( striEqual( token, "q3map_forceSunlight" ) ) {
+					si->forceSunlight = true;
 				}
 
 				/* q3map_onlyvertexlighting (sof2) */
-				else if ( !Q_stricmp( token, "q3map_onlyVertexLighting" ) ) {
+				else if ( striEqual( token, "q3map_onlyVertexLighting" ) ) {
 					ApplySurfaceParm( "pointlight", &si->contentFlags, &si->surfaceFlags, &si->compileFlags );
 				}
 
 				/* q3map_material (sof2) */
-				else if ( !Q_stricmp( token, "q3map_material" ) ) {
-					GetTokenAppend( shaderText, qfalse );
+				else if ( striEqual( token, "q3map_material" ) ) {
+					GetTokenAppend( shaderText, false );
 					sprintf( temp, "*mat_%s", token );
-					if ( ApplySurfaceParm( temp, &si->contentFlags, &si->surfaceFlags, &si->compileFlags ) == qfalse ) {
+					if ( !ApplySurfaceParm( temp, &si->contentFlags, &si->surfaceFlags, &si->compileFlags ) ) {
 						Sys_Warning( "Unknown material \"%s\"\n", token );
 					}
 				}
 
 				/* ydnar: q3map_clipmodel (autogenerate clip brushes for model triangles using this shader) */
-				else if ( !Q_stricmp( token, "q3map_clipmodel" )  ) {
-					si->clipModel = qtrue;
+				else if ( striEqual( token, "q3map_clipmodel" )  ) {
+					si->clipModel = true;
 				}
 
 				/* ydnar: q3map_styleMarker[2] */
-				else if ( !Q_stricmp( token, "q3map_styleMarker" ) ) {
+				else if ( striEqual( token, "q3map_styleMarker" ) ) {
 					si->styleMarker = 1;
 				}
-				else if ( !Q_stricmp( token, "q3map_styleMarker2" ) ) {  /* uses depthFunc equal */
+				else if ( striEqual( token, "q3map_styleMarker2" ) ) {  /* uses depthFunc equal */
 					si->styleMarker = 2;
 				}
 
@@ -1986,7 +1959,7 @@ static void ParseShaderFile( const char *filename ){
 				else
 				{
 					Sys_FPrintf( SYS_VRB, "Attempting to match %s with a known surfaceparm\n", token );
-					if ( ApplySurfaceParm( &token[ 6 ], &si->contentFlags, &si->surfaceFlags, &si->compileFlags ) == qfalse ) {
+					if ( !ApplySurfaceParm( &token[ 6 ], &si->contentFlags, &si->surfaceFlags, &si->compileFlags ) ) {
 						Sys_Warning( "Unknown q3map_* directive \"%s\"\n", token );
 					}
 				}
@@ -1999,7 +1972,7 @@ static void ParseShaderFile( const char *filename ){
 			   ----------------------------------------------------------------- */
 
 			/* ignore all other tokens on the line */
-			while ( TokenAvailable() && GetTokenAppend( shaderText, qfalse ) ) ;
+			while ( TokenAvailable() && GetTokenAppend( shaderText, false ) ) ;
 		}
 	}
 }
@@ -2012,7 +1985,7 @@ static void ParseShaderFile( const char *filename ){
  */
 
 static void ParseCustomInfoParms( void ){
-	qboolean parsedContent, parsedSurface;
+	bool parsedContent, parsedSurface;
 
 
 	/* file exists? */
@@ -2026,24 +1999,23 @@ static void ParseCustomInfoParms( void ){
 	/* clear the array */
 	memset( custSurfaceParms, 0, sizeof( custSurfaceParms ) );
 	numCustSurfaceParms = 0;
-	parsedContent = parsedSurface = qfalse;
+	parsedContent = parsedSurface = false;
 
 	/* parse custom contentflags */
 	MatchToken( "{" );
 	while ( 1 )
 	{
-		if ( !GetToken( qtrue ) ) {
+		if ( !GetToken( true ) ) {
 			break;
 		}
 
-		if ( !strcmp( token, "}" ) ) {
-			parsedContent = qtrue;
+		if ( strEqual( token, "}" ) ) {
+			parsedContent = true;
 			break;
 		}
 
-		custSurfaceParms[ numCustSurfaceParms ].name = safe_malloc( MAX_OS_PATH );
-		strcpy( custSurfaceParms[ numCustSurfaceParms ].name, token );
-		GetToken( qfalse );
+		custSurfaceParms[ numCustSurfaceParms ].name = copystring( token );
+		GetToken( false );
 		sscanf( token, "%x", &custSurfaceParms[ numCustSurfaceParms ].contentFlags );
 		numCustSurfaceParms++;
 	}
@@ -2058,18 +2030,17 @@ static void ParseCustomInfoParms( void ){
 	MatchToken( "{" );
 	while ( 1 )
 	{
-		if ( !GetToken( qtrue ) ) {
+		if ( !GetToken( true ) ) {
 			break;
 		}
 
-		if ( !strcmp( token, "}" ) ) {
-			parsedSurface = qtrue;
+		if ( strEqual( token, "}" ) ) {
+			parsedSurface = true;
 			break;
 		}
 
-		custSurfaceParms[ numCustSurfaceParms ].name = safe_malloc( MAX_OS_PATH );
-		strcpy( custSurfaceParms[ numCustSurfaceParms ].name, token );
-		GetToken( qfalse );
+		custSurfaceParms[ numCustSurfaceParms ].name = copystring( token );
+		GetToken( false );
 		sscanf( token, "%x", &custSurfaceParms[ numCustSurfaceParms ].surfaceFlags );
 		numCustSurfaceParms++;
 	}
@@ -2117,11 +2088,11 @@ void LoadShaderInfo( void ){
 		LoadScriptFile( filename, i );
 
 		/* parse it */
-		while ( GetToken( qtrue ) )
+		while ( GetToken( true ) )
 		{
 			/* check for duplicate entries */
 			for ( j = 0; j < numShaderFiles; j++ )
-				if ( !strcmp( shaderFiles[ j ], token ) ) {
+				if ( strEqual( shaderFiles[ j ], token ) ) {
 					break;
 				}
 
@@ -2132,9 +2103,7 @@ void LoadShaderInfo( void ){
 
 			/* new shader file */
 			if ( j == numShaderFiles ) {
-				shaderFiles[ numShaderFiles ] = safe_malloc( MAX_OS_PATH );
-				strcpy( shaderFiles[ numShaderFiles ], token );
-				numShaderFiles++;
+				shaderFiles[ numShaderFiles++ ] = copystring( token );
 			}
 		}
 	}

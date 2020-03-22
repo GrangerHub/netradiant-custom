@@ -255,8 +255,7 @@ void LoadLBM( const char *filename, byte **picture, byte **palette ){
 			break;
 
 		case CMAPID:
-			cmapbuffer = safe_malloc( 768 );
-			memset( cmapbuffer, 0, 768 );
+			cmapbuffer = safe_calloc( 768 );
 			memcpy( cmapbuffer, LBM_P, chunklength );
 			break;
 
@@ -517,10 +516,7 @@ void LoadPCX( const char *filename, byte **pic, byte **palette, int *width, int 
 		return;
 	}
 
-	out = safe_malloc( ( pcx->ymax + 1 ) * ( pcx->xmax + 1 ) );
-	if ( !out ) {
-		Error( "LoadPCX: couldn't allocate" );
-	}
+	out = safe_malloc_info( ( pcx->ymax + 1 ) * ( pcx->xmax + 1 ), "LoadPCX" );
 
 	*pic = out;
 	pix = out;
@@ -690,7 +686,7 @@ void LoadBMP( const char *filename, byte **pic, byte **palette, int *width, int 
 	int bcPlanes;
 	int bcBitCount;
 	byte bcPalette[1024];
-	qboolean flipped;
+	bool flipped;
 	byte *in;
 	int len, pos = 0;
 
@@ -767,10 +763,10 @@ void LoadBMP( const char *filename, byte **pic, byte **palette, int *width, int 
 
 	if ( bcHeight < 0 ) {
 		bcHeight = -bcHeight;
-		flipped = qtrue;
+		flipped = true;
 	}
 	else {
-		flipped = qfalse;
+		flipped = false;
 	}
 
 	if ( width ) {
@@ -821,10 +817,9 @@ void LoadBMP( const char *filename, byte **pic, byte **palette, int *width, int 
    ==============
  */
 void Load256Image( const char *name, byte **pixels, byte **palette, int *width, int *height ){
-	char ext[128];
+	const char *ext = path_get_extension( name );
 
-	ExtractFileExtension( name, ext );
-	if ( !Q_stricmp( ext, "lbm" ) ) {
+	if ( striEqual( ext, "lbm" ) ) {
 		LoadLBM( name, pixels, palette );
 		if ( width ) {
 			*width = bmhd.w;
@@ -833,10 +828,10 @@ void Load256Image( const char *name, byte **pixels, byte **palette, int *width, 
 			*height = bmhd.h;
 		}
 	}
-	else if ( !Q_stricmp( ext, "pcx" ) ) {
+	else if ( striEqual( ext, "pcx" ) ) {
 		LoadPCX( name, pixels, palette, width, height );
 	}
-	else if ( !Q_stricmp( ext, "bmp" ) ) {
+	else if ( striEqual( ext, "bmp" ) ) {
 		LoadBMP( name, pixels, palette, width, height );
 	}
 	else{
@@ -854,13 +849,12 @@ void Load256Image( const char *name, byte **pixels, byte **palette, int *width, 
  */
 void Save256Image( const char *name, byte *pixels, byte *palette,
 				   int width, int height ){
-	char ext[128];
+	const char *ext = path_get_extension( name );
 
-	ExtractFileExtension( name, ext );
-	if ( !Q_stricmp( ext, "lbm" ) ) {
+	if ( striEqual( ext, "lbm" ) ) {
 		WriteLBMfile( name, pixels, width, height, palette );
 	}
-	else if ( !Q_stricmp( ext, "pcx" ) ) {
+	else if ( striEqual( ext, "pcx" ) ) {
 		WritePCXfile( name, pixels, width, height, palette );
 	}
 	else{
@@ -1006,11 +1000,7 @@ void LoadTGABuffer( const byte *f, const byte *enddata, byte **pic, int *width, 
 		return;
 	}
 
-	image_rgba = safe_malloc( image_width * image_height * 4 );
-	if ( !image_rgba ) {
-		Sys_Printf( "LoadTGA: not enough memory for %i by %i image\n", image_width, image_height );
-		return;
-	}
+	image_rgba = safe_malloc_info( image_width * image_height * 4, "LoadTGABuffer" );
 
 	// If bit 5 of attributes isn't set, the image has been stored from bottom to top
 	if ( ( targa_header.attributes & 0x20 ) == 0 ) {
@@ -1203,7 +1193,6 @@ void WriteTGAGray( const char *filename, byte *data, int width, int height ) {
    ==============
  */
 void Load32BitImage( const char *name, unsigned **pixels,  int *width, int *height ){
-	char ext[128];
 	byte    *palette;
 	byte    *pixels8;
 	byte    *pixels32;
@@ -1211,8 +1200,7 @@ void Load32BitImage( const char *name, unsigned **pixels,  int *width, int *heig
 	int i;
 	int v;
 
-	ExtractFileExtension( name, ext );
-	if ( !Q_stricmp( ext, "tga" ) ) {
+	if ( striEqual( path_get_extension( name ), "tga" ) ) {
 		LoadTGA( name, (byte **)pixels, width, height );
 	}
 	else {

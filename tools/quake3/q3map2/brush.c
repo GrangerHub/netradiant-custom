@@ -90,24 +90,7 @@ int CountBrushList( brush_t *brushes ){
  */
 
 brush_t *AllocBrush( int numSides ){
-	brush_t     *bb;
-	size_t c;
-
-
-	/* allocate and clear */
-	/*if ( numSides <= 0 ) {
-		Error( "AllocBrush called with numsides = %d", numSides );
-	}
-	c = (size_t)&( ( (brush_t*) 0 )->sides[ numSides ] );*/
-	c = sizeof(*bb) + (numSides > 6 ? sizeof(side_t)*(numSides - 6) : 0);
-	bb = safe_malloc( c );
-	memset( bb, 0, c );
-	if ( numthreads == 1 ) {
-		numActiveBrushes++;
-	}
-
-	/* return it */
-	return bb;
+	return safe_calloc( offsetof( brush_t, sides[numSides] ) );
 }
 
 
@@ -134,14 +117,11 @@ void FreeBrush( brush_t *b ){
 		}
 
 	/* ydnar: overwrite it */
-	memset( b, 0xFE, (size_t)&( ( (brush_t*) 0 )->sides[ b->numsides ] ) );
+	memset( b, 0xFE, offsetof( brush_t, sides[b->numsides] ) );
 	*( (unsigned int*) b ) = 0xFEFEFEFE;
 
 	/* free it */
 	free( b );
-	if ( numthreads == 1 ) {
-		numActiveBrushes--;
-	}
 }
 
 
@@ -170,22 +150,16 @@ void FreeBrushList( brush_t *brushes ){
    duplicates the brush, sides, and windings
  */
 
-brush_t *CopyBrush( brush_t *brush ){
-	brush_t     *newBrush;
-	size_t size;
-	int i;
-
-
+brush_t *CopyBrush( const brush_t *brush ){
 	/* copy brush */
-	size = (size_t)&( ( (brush_t*) 0 )->sides[ brush->numsides ] );
-	newBrush = AllocBrush( brush->numsides );
-	memcpy( newBrush, brush, size );
+	brush_t *newBrush = AllocBrush( brush->numsides );
+	memcpy( newBrush, brush, offsetof( brush_t, sides[brush->numsides] ) );
 
 	/* ydnar: nuke linked list */
 	newBrush->next = NULL;
 
 	/* copy sides */
-	for ( i = 0; i < brush->numsides; i++ )
+	for ( int i = 0; i < brush->numsides; i++ )
 	{
 		if ( brush->sides[ i ].winding != NULL ) {
 			newBrush->sides[ i ].winding = CopyWinding( brush->sides[ i ].winding );
@@ -205,7 +179,7 @@ brush_t *CopyBrush( brush_t *brush ){
    returns false if the brush doesn't enclose a valid volume
  */
 
-qboolean BoundBrush( brush_t *brush ){
+bool BoundBrush( brush_t *brush ){
 	int i, j;
 	winding_t   *w;
 
@@ -224,11 +198,11 @@ qboolean BoundBrush( brush_t *brush ){
 	for ( i = 0; i < 3; i++ )
 	{
 		if ( brush->mins[ i ] < MIN_WORLD_COORD || brush->maxs[ i ] > MAX_WORLD_COORD || brush->mins[i] >= brush->maxs[ i ] ) {
-			return qfalse;
+			return false;
 		}
 	}
 
-	return qtrue;
+	return true;
 }
 
 
@@ -333,13 +307,13 @@ void SnapWeldVectorAccu( vec3_accu_t a, vec3_accu_t b, vec3_accu_t out ){
 /*
    FixWinding() - ydnar
    removes degenerate edges from a winding
-   returns qtrue if the winding is valid
+   returns true if the winding is valid
  */
 
 #define DEGENERATE_EPSILON  0.1
 
-qboolean FixWinding( winding_t *w ){
-	qboolean valid = qtrue;
+bool FixWinding( winding_t *w ){
+	bool valid = true;
 	int i, j, k;
 	vec3_t vec;
 	float dist;
@@ -347,7 +321,7 @@ qboolean FixWinding( winding_t *w ){
 
 	/* dummy check */
 	if ( !w ) {
-		return qfalse;
+		return false;
 	}
 
 	/* check all verts */
@@ -365,7 +339,7 @@ qboolean FixWinding( winding_t *w ){
 		VectorSubtract( w->p[ i ], w->p[ j ], vec );
 		dist = VectorLength( vec );
 		if ( dist < DEGENERATE_EPSILON ) {
-			valid = qfalse;
+			valid = false;
 			//Sys_FPrintf( SYS_WRN | SYS_VRBflag, "WARNING: Degenerate winding edge found, fixing...\n" );
 
 			/* create an average point (ydnar 2002-01-26: using nearest-integer weld preference) */
@@ -385,7 +359,7 @@ qboolean FixWinding( winding_t *w ){
 
 	/* one last check and return */
 	if ( w->numpoints < 3 ) {
-		valid = qfalse;
+		valid = false;
 	}
 	return valid;
 }
@@ -395,8 +369,8 @@ qboolean FixWinding( winding_t *w ){
    FixWindingAccu
 
    Removes degenerate edges (edges that are too short) from a winding.
-   Returns qtrue if the winding has been altered by this function.
-   Returns qfalse if the winding is untouched by this function.
+   Returns true if the winding has been altered by this function.
+   Returns false if the winding is untouched by this function.
 
    It's advised that you check the winding after this function exits to make
    sure it still has at least 3 points.  If that is not the case, the winding
@@ -404,24 +378,24 @@ qboolean FixWinding( winding_t *w ){
    if the some of the winding's points are close together.
    ==================
  */
-qboolean FixWindingAccu( winding_accu_t *w ){
+bool FixWindingAccu( winding_accu_t *w ){
 	int i, j, k;
 	vec3_accu_t vec;
 	vec_accu_t dist;
-	qboolean done, altered;
+	bool done, altered;
 
 	if ( w == NULL ) {
 		Error( "FixWindingAccu: NULL argument" );
 	}
 
-	altered = qfalse;
+	altered = false;
 
-	while ( qtrue )
+	while ( true )
 	{
 		if ( w->numpoints < 2 ) {
 			break;                   // Don't remove the only remaining point.
 		}
-		done = qtrue;
+		done = true;
 		for ( i = 0; i < w->numpoints; i++ )
 		{
 			j = ( ( ( i + 1 ) == w->numpoints ) ? 0 : ( i + 1 ) );
@@ -441,14 +415,14 @@ qboolean FixWindingAccu( winding_accu_t *w ){
 					VectorCopyAccu( w->p[k], w->p[k - 1] );
 				}
 				w->numpoints--;
-				altered = qtrue;
+				altered = true;
 				// The only way to finish off fixing the winding consistently and
 				// accurately is by fixing the winding all over again.  For example,
 				// the point at index i and the point at index i-1 could now be
 				// less than the epsilon distance apart.  There are too many special
 				// case problems we'd need to handle if we didn't start from the
 				// beginning.
-				done = qfalse;
+				done = false;
 				break; // This will cause us to return to the "while" loop.
 			}
 		}
@@ -467,7 +441,7 @@ qboolean FixWindingAccu( winding_accu_t *w ){
    returns false if the brush doesn't enclose a valid volume
  */
 
-qboolean CreateBrushWindings( brush_t *brush ){
+bool CreateBrushWindings( brush_t *brush ){
 	int i, j;
 #if Q3MAP2_EXPERIMENTAL_HIGH_PRECISION_MATH_FIXES
 	winding_accu_t  *w;
@@ -705,12 +679,12 @@ int FilterBrushIntoTree_r( brush_t *b, node_t *node ){
 		/* classify the leaf by the structural brush */
 		if ( !b->detail ) {
 			if ( b->opaque ) {
-				node->opaque = qtrue;
-				node->areaportal = qfalse;
+				node->opaque = true;
+				node->areaportal = false;
 			}
 			else if ( b->compileFlags & C_AREAPORTAL ) {
 				if ( !node->opaque ) {
-					node->areaportal = qtrue;
+					node->areaportal = true;
 				}
 			}
 		}
@@ -765,7 +739,7 @@ void FilterDetailBrushesIntoTree( entity_t *e, tree_t *tree ){
 			for ( i = 0; i < b->numsides; i++ )
 			{
 				if ( b->sides[ i ].winding ) {
-					b->sides[ i ].visible = qtrue;
+					b->sides[ i ].visible = true;
 				}
 			}
 		}
@@ -806,7 +780,7 @@ void FilterStructuralBrushesIntoTree( entity_t *e, tree_t *tree ) {
 		if ( r ) {
 			for ( i = 0 ; i < b->numsides ; i++ ) {
 				if ( b->sides[i].winding ) {
-					b->sides[i].visible = qtrue;
+					b->sides[i].visible = true;
 				}
 			}
 		}
@@ -825,12 +799,8 @@ void FilterStructuralBrushesIntoTree( entity_t *e, tree_t *tree ) {
    ================
  */
 tree_t *AllocTree( void ){
-	tree_t  *tree;
-
-	tree = safe_malloc( sizeof( *tree ) );
-	memset( tree, 0, sizeof( *tree ) );
+	tree_t *tree = safe_calloc( sizeof( *tree ) );
 	ClearBounds( tree->mins, tree->maxs );
-
 	return tree;
 }
 
@@ -840,12 +810,7 @@ tree_t *AllocTree( void ){
    ================
  */
 node_t *AllocNode( void ){
-	node_t  *node;
-
-	node = safe_malloc( sizeof( *node ) );
-	memset( node, 0, sizeof( *node ) );
-
-	return node;
+	return safe_calloc( sizeof( node_t ) );
 }
 
 
@@ -858,11 +823,11 @@ node_t *AllocNode( void ){
    ================
  */
 #define EDGE_LENGTH 0.2
-qboolean WindingIsTiny( winding_t *w ){
+bool WindingIsTiny( winding_t *w ){
 /*
     if (WindingArea (w) < 1)
-        return qtrue;
-    return qfalse;
+        return true;
+    return false;
  */
 	int i, j;
 	vec_t len;
@@ -877,11 +842,11 @@ qboolean WindingIsTiny( winding_t *w ){
 		len = VectorLength( delta );
 		if ( len > EDGE_LENGTH ) {
 			if ( ++edges == 3 ) {
-				return qfalse;
+				return false;
 			}
 		}
 	}
-	return qtrue;
+	return true;
 }
 
 /*
@@ -892,17 +857,17 @@ qboolean WindingIsTiny( winding_t *w ){
    from basewinding for plane
    ================
  */
-qboolean WindingIsHuge( winding_t *w ){
+bool WindingIsHuge( winding_t *w ){
 	int i, j;
 
 	for ( i = 0 ; i < w->numpoints ; i++ )
 	{
 		for ( j = 0 ; j < 3 ; j++ )
 			if ( w->p[i][j] <= MIN_WORLD_COORD || w->p[i][j] >= MAX_WORLD_COORD ) {
-				return qtrue;
+				return true;
 			}
 	}
-	return qfalse;
+	return false;
 }
 
 //============================================================
@@ -1027,7 +992,7 @@ void SplitBrush( brush_t *brush, int planenum, brush_t **front, brush_t **back )
 	for ( i = 0 ; i < 2 ; i++ )
 	{
 		b[i] = AllocBrush( brush->numsides + 1 );
-		memcpy( b[i], brush, sizeof( brush_t ) - sizeof( brush->sides ) );
+		memcpy( b[i], brush, sizeof( brush_t ) );
 		b[i]->numsides = 0;
 		b[i]->next = NULL;
 		b[i]->original = brush->original;

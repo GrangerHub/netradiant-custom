@@ -20,21 +20,14 @@
  */
 
 
+#include <stddef.h>
+
 #include "cmdlib.h"
 #include "mathlib.h"
 #include "inout.h"
 #include "polylib.h"
 #include "qfiles.h"
 
-
-extern int numthreads;
-
-// counters are only bumped when running single threaded,
-// because they are an awefull coherence problem
-int c_active_windings;
-int c_peak_windings;
-int c_winding_allocs;
-int c_winding_points;
 
 #define BOGUS_RANGE WORLD_SIZE
 
@@ -51,25 +44,10 @@ void pw( winding_t *w ){
    =============
  */
 winding_t   *AllocWinding( int points ){
-	winding_t   *w;
-	int s;
-
 	if ( points >= MAX_POINTS_ON_WINDING ) {
 		Error( "AllocWinding failed: MAX_POINTS_ON_WINDING exceeded" );
 	}
-
-	if ( numthreads == 1 ) {
-		c_winding_allocs++;
-		c_winding_points += points;
-		c_active_windings++;
-		if ( c_active_windings > c_peak_windings ) {
-			c_peak_windings = c_active_windings;
-		}
-	}
-	s = sizeof( *w ) + ( points ? sizeof( w->p[0] ) * ( points - 1 ) : 0 );
-	w = safe_malloc( s );
-	memset( w, 0, s );
-	return w;
+	return safe_calloc( offsetof( winding_t, p[points] ) );
 }
 
 /*
@@ -78,26 +56,10 @@ winding_t   *AllocWinding( int points ){
    =============
  */
 winding_accu_t *AllocWindingAccu( int points ){
-	winding_accu_t  *w;
-	int s;
-
 	if ( points >= MAX_POINTS_ON_WINDING ) {
 		Error( "AllocWindingAccu failed: MAX_POINTS_ON_WINDING exceeded" );
 	}
-
-	if ( numthreads == 1 ) {
-		// At the time of this writing, these statistics were not used in any way.
-		c_winding_allocs++;
-		c_winding_points += points;
-		c_active_windings++;
-		if ( c_active_windings > c_peak_windings ) {
-			c_peak_windings = c_active_windings;
-		}
-	}
-	s = sizeof( *w ) + ( points ? sizeof( w->p[0] ) * ( points - 1 ) : 0 );
-	w = safe_malloc( s );
-	memset( w, 0, s );
-	return w;
+	return safe_calloc( offsetof( winding_accu_t, p[points] ) );
 }
 
 /*
@@ -115,9 +77,6 @@ void FreeWinding( winding_t *w ){
 	}
 	*(unsigned *)w = 0xdeaddead;
 
-	if ( numthreads == 1 ) {
-		c_active_windings--;
-	}
 	free( w );
 }
 
@@ -136,9 +95,6 @@ void FreeWindingAccu( winding_accu_t *w ){
 	}
 	*( (unsigned *) w ) = 0xdeaddead;
 
-	if ( numthreads == 1 ) {
-		c_active_windings--;
-	}
 	free( w );
 }
 
@@ -147,8 +103,6 @@ void FreeWindingAccu( winding_accu_t *w ){
    RemoveColinearPoints
    ============
  */
-int c_removed;
-
 void    RemoveColinearPoints( winding_t *w ){
 	int i, j, k;
 	vec3_t v1, v2;
@@ -174,9 +128,6 @@ void    RemoveColinearPoints( winding_t *w ){
 		return;
 	}
 
-	if ( numthreads == 1 ) {
-		c_removed += w->numpoints - nump;
-	}
 	w->numpoints = nump;
 	memcpy( w->p, p, nump * sizeof( p[0] ) );
 }
@@ -458,18 +409,11 @@ winding_t *BaseWindingForPlane( vec3_t normal, vec_t dist ){
    CopyWinding
    ==================
  */
-winding_t   *CopyWinding( winding_t *w ){
-	size_t size;
-	winding_t   *c;
-
+winding_t   *CopyWinding( const winding_t *w ){
 	if ( !w ) {
 		Error( "CopyWinding: winding is NULL" );
 	}
-
-	c = AllocWinding( w->numpoints );
-	size = (size_t)( (winding_t *)NULL )->p[w->numpoints];
-	memcpy( c, w, size );
-	return c;
+	return memcpy( AllocWinding( w->numpoints ), w, offsetof( winding_t, p[w->numpoints] ) );
 }
 
 /*
@@ -478,19 +422,11 @@ winding_t   *CopyWinding( winding_t *w ){
    ==================
  */
 winding_accu_t *CopyWindingAccuIncreaseSizeAndFreeOld( winding_accu_t *w ){
-	int i;
-	winding_accu_t  *c;
-
 	if ( !w ) {
 		Error( "CopyWindingAccuIncreaseSizeAndFreeOld: winding is NULL" );
 	}
 
-	c = AllocWindingAccu( w->numpoints + 1 );
-	c->numpoints = w->numpoints;
-	for ( i = 0; i < c->numpoints; i++ )
-	{
-		VectorCopyAccu( w->p[i], c->p[i] );
-	}
+	winding_accu_t *c = memcpy( AllocWindingAccu( w->numpoints + 1 ), w, offsetof( winding_accu_t, p[w->numpoints] ) );
 	FreeWindingAccu( w );
 	return c;
 }
@@ -500,7 +436,7 @@ winding_accu_t *CopyWindingAccuIncreaseSizeAndFreeOld( winding_accu_t *w ){
    CopyWindingAccuToRegular
    ==================
  */
-winding_t   *CopyWindingAccuToRegular( winding_accu_t *w ){
+winding_t   *CopyWindingAccuToRegular( const winding_accu_t *w ){
 	int i;
 	winding_t   *c;
 
@@ -669,7 +605,6 @@ void    ClipWindingEpsilon( winding_t *in, vec3_t normal, vec_t dist,
    =============
  */
 void ChopWindingInPlaceAccu( winding_accu_t **inout, vec3_t normal, vec_t dist, vec_t crudeEpsilon ){
-	vec_accu_t fineEpsilon;
 	winding_accu_t  *in;
 	int counts[3];
 	int i, j;
@@ -714,10 +649,7 @@ void ChopWindingInPlaceAccu( winding_accu_t **inout, vec3_t normal, vec_t dist, 
 	// 64-bit land inside of the epsilon for all numbers we're dealing with.
 
 	static const vec_accu_t smallestEpsilonAllowed = ( (vec_accu_t) VEC_SMALLEST_EPSILON_AROUND_ONE ) * 0.5;
-	if ( crudeEpsilon < smallestEpsilonAllowed ) {
-		fineEpsilon = smallestEpsilonAllowed;
-	}
-	else{fineEpsilon = (vec_accu_t) crudeEpsilon; }
+	const vec_accu_t fineEpsilon = ( crudeEpsilon < smallestEpsilonAllowed )? smallestEpsilonAllowed : (vec_accu_t) crudeEpsilon;
 
 	in = *inout;
 	counts[0] = counts[1] = counts[2] = 0;
@@ -1016,12 +948,12 @@ void CheckWinding( winding_t *w ){
    ============
  */
 int     WindingOnPlaneSide( winding_t *w, vec3_t normal, vec_t dist ){
-	qboolean front, back;
+	bool front, back;
 	int i;
 	vec_t d;
 
-	front = qfalse;
-	back = qfalse;
+	front = false;
+	back = false;
 	for ( i = 0 ; i < w->numpoints ; i++ )
 	{
 		d = DotProduct( w->p[i], normal ) - dist;
@@ -1029,14 +961,14 @@ int     WindingOnPlaneSide( winding_t *w, vec3_t normal, vec_t dist ){
 			if ( front ) {
 				return SIDE_CROSS;
 			}
-			back = qtrue;
+			back = true;
 			continue;
 		}
 		if ( d > ON_EPSILON ) {
 			if ( back ) {
 				return SIDE_CROSS;
 			}
-			front = qtrue;
+			front = true;
 			continue;
 		}
 	}
@@ -1068,8 +1000,8 @@ void    AddWindingToConvexHull( winding_t *w, winding_t **hull, vec3_t normal ) 
 	vec3_t hullPoints[MAX_HULL_POINTS];
 	vec3_t newHullPoints[MAX_HULL_POINTS];
 	vec3_t hullDirs[MAX_HULL_POINTS];
-	qboolean hullSide[MAX_HULL_POINTS];
-	qboolean outside;
+	bool hullSide[MAX_HULL_POINTS];
+	bool outside;
 
 	if ( !*hull ) {
 		*hull = CopyWinding( w );
@@ -1091,19 +1023,14 @@ void    AddWindingToConvexHull( winding_t *w, winding_t **hull, vec3_t normal ) 
 			CrossProduct( normal, dir, hullDirs[j] );
 		}
 
-		outside = qfalse;
+		outside = false;
 		for ( j = 0 ; j < numHullPoints ; j++ ) {
 			VectorSubtract( p, hullPoints[j], dir );
 			d = DotProduct( dir, hullDirs[j] );
 			if ( d >= ON_EPSILON ) {
-				outside = qtrue;
+				outside = true;
 			}
-			if ( d >= -ON_EPSILON ) {
-				hullSide[j] = qtrue;
-			}
-			else {
-				hullSide[j] = qfalse;
-			}
+			hullSide[j] = ( d >= -ON_EPSILON );
 		}
 
 		// if the point is effectively inside, do nothing
